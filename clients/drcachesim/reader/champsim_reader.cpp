@@ -35,6 +35,8 @@
 
 // Provide standard algorithms and string operations.
 #include <algorithm>
+// Provide memory copy and manipulation functions.
+#include <cstring>
 // Provide standard string formatting.
 #include <iomanip>
 
@@ -42,6 +44,32 @@
 namespace dynamorio {
 // Open drmemtrace simulation namespace.
 namespace drmemtrace {
+
+champsim_trace_format_t
+champsim_trace_reader_t::parse_format_string(const std::string &format_str, bool is_cloudsuite_flag)
+{
+    // Check if the boolean --is_cloudsuite shortcut flag was explicitly enabled.
+    if (is_cloudsuite_flag) {
+        // Return CloudSuite 96-byte format directly.
+        return champsim_trace_format_t::FORMAT_CLOUDSUITE;
+    }
+    // Make a local modifiable copy of the format string.
+    std::string s = format_str;
+    // Convert format string characters to lowercase for case-insensitivity.
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    // Test for CloudSuite aliases: "cloudsuite", "cs", "96", "96b".
+    if (s == "cloudsuite" || s == "cs" || s == "96" || s == "96b") {
+        // Return CloudSuite 96-byte layout format.
+        return champsim_trace_format_t::FORMAT_CLOUDSUITE;
+    }
+    // Test for Standard / Default aliases: "default", "standard", "64", "64b".
+    if (s == "default" || s == "standard" || s == "64" || s == "64b") {
+        // Return Default / Standard 64-byte layout format.
+        return champsim_trace_format_t::FORMAT_STANDARD;
+    }
+    // Return automatic format detection if unspecified or "auto".
+    return champsim_trace_format_t::FORMAT_AUTO;
+}
 
 champsim_trace_reader_t::champsim_trace_reader_t(
     const std::string &trace_path,
@@ -70,26 +98,124 @@ champsim_trace_reader_t::~champsim_trace_reader_t()
     close();
 }
 
+int
+champsim_trace_reader_t::score_format_step(const std::vector<uint8_t> &data, size_t step) const
+{
+    // Need at least 2 records to evaluate sequential deltas.
+    if (data.size() < step * 2) {
+        return -100;
+    }
+
+    int score = 0;
+    size_t num_records = data.size() / step;
+    size_t limit = std::min(num_records - 1, static_cast<size_t>(25));
+
+    for (size_t i = 0; i < limit; ++i) {
+        size_t off1 = i * step;
+        size_t off2 = (i + 1) * step;
+
+        uint64_t ip1 = 0, ip2 = 0;
+        memcpy(&ip1, &data[off1], sizeof(uint64_t));
+        memcpy(&ip2, &data[off2], sizeof(uint64_t));
+
+        uint8_t is_br1 = data[off1 + 8];
+        uint8_t br_tk1 = data[off1 + 9];
+        uint8_t is_br2 = data[off2 + 8];
+        uint8_t br_tk2 = data[off2 + 9];
+
+        // Flag checks: is_branch and branch_taken must strictly be 0 or 1.
+        if (is_br1 > 1 || br_tk1 > 1 || is_br2 > 1 || br_tk2 > 1) {
+            return -100; // Invalid flag values for instruction record.
+        }
+
+        // Program counter check: IP cannot be 0.
+        if (ip1 == 0 || ip2 == 0) {
+            return -100;
+        }
+
+        // When the preceding instruction is not a branch, execution is sequential.
+        if (is_br1 == 0) {
+            if (ip2 > ip1 && (ip2 - ip1) <= 16) {
+                // Typical sequential instruction length: 1 to 16 bytes.
+                score += 10;
+            } else if (ip2 == ip1 || (ip2 > ip1 && (ip2 - ip1) > 1000000) || ip2 < ip1) {
+                score -= 5;
+            }
+        }
+    }
+
+    return score;
+}
+
+size_t
+champsim_trace_reader_t::read_bytes(void *dest, size_t n)
+{
+    uint8_t *out = static_cast<uint8_t *>(dest);
+    size_t bytes_copied = 0;
+
+    // 1. Drain any remaining preloaded bytes from initial format probing.
+    if (preload_offset_ < preload_buffer_.size()) {
+        size_t avail = preload_buffer_.size() - preload_offset_;
+        size_t to_copy = std::min(n, avail);
+        memcpy(out, &preload_buffer_[preload_offset_], to_copy);
+        preload_offset_ += to_copy;
+        bytes_copied += to_copy;
+        out += to_copy;
+        n -= to_copy;
+    }
+
+    // 2. Read remainder from open file handle if needed.
+    if (n > 0 && file_handle_ != nullptr) {
+        size_t nread = fread(out, 1, n, file_handle_);
+        bytes_copied += nread;
+    }
+
+    return bytes_copied;
+}
+
 void
 champsim_trace_reader_t::detect_format()
 {
-    // If caller explicitly requested standard or cloudsuite, honor it.
+    preload_buffer_.clear();
+    preload_offset_ = 0;
+
+    // Read up to 2880 bytes (30 records of 96B) into preload buffer for probing.
+    std::vector<uint8_t> temp(96 * 30);
+    size_t nread = fread(temp.data(), 1, temp.size(), file_handle_);
+    if (nread > 0) {
+        temp.resize(nread);
+        preload_buffer_ = std::move(temp);
+    }
+
+    // If caller explicitly requested standard or cloudsuite, honor it directly without probing.
     if (requested_format_ != champsim_trace_format_t::FORMAT_AUTO) {
+        // Set the active format to the user-requested format.
         format_ = requested_format_;
+        // Check if user requested CloudSuite format.
+        if (format_ == champsim_trace_format_t::FORMAT_CLOUDSUITE) {
+            // Log user-configured format.
+            std::cout << "[ChampSim Reader] Using user-specified flag: CloudSuite format (96-byte records)\n";
+        } else {
+            // Log user-configured format.
+            std::cout << "[ChampSim Reader] Using user-specified flag: Default / Standard ChampSim format (64-byte records)\n";
+        }
+        // Return early without running auto-detection scoring.
         return;
     }
 
-    // Heuristic 1: Check if trace path filename indicates CloudSuite.
-    std::string lower_path = trace_path_;
-    std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(), ::tolower);
-    if (lower_path.find("cloudsuite") != std::string::npos ||
-        lower_path.find("cs_") != std::string::npos) {
+    // Auto-detection based on sequential instruction stride scoring.
+    int score_64 = score_format_step(preload_buffer_, 64);
+    int score_96 = score_format_step(preload_buffer_, 96);
+
+    if (score_96 > score_64 && score_96 > 0) {
         format_ = champsim_trace_format_t::FORMAT_CLOUDSUITE;
-        return;
+        std::cout << "[ChampSim Reader] Auto-detected trace format: CloudSuite (96-byte records) [score: "
+                  << score_96 << " vs 64B score: " << score_64 << "]\n";
+    } else {
+        format_ = champsim_trace_format_t::FORMAT_STANDARD;
+        std::cout << "[ChampSim Reader] Auto-detected trace format: Standard ChampSim (64-byte records) [score: "
+                  << score_64 << " vs 96B score: " << score_96 << "]\n";
     }
-
-    // Default to standard 64-byte ChampSim format.
-    format_ = champsim_trace_format_t::FORMAT_STANDARD;
 }
 
 bool
@@ -103,9 +229,6 @@ champsim_trace_reader_t::open()
         std::cerr << "champsim_trace_reader_t: Empty trace path specified!\n";
         return false;
     }
-
-    // Resolve format (standard 64B vs CloudSuite 96B).
-    detect_format();
 
     // Reset EOF and progress state.
     at_eof_ = false;
@@ -144,12 +267,19 @@ champsim_trace_reader_t::open()
         return false;
     }
 
+    // Probe initial bytes to automatically distinguish CloudSuite from Standard format.
+    detect_format();
+
     return true;
 }
 
 void
 champsim_trace_reader_t::close()
 {
+    // Clear preload buffer.
+    preload_buffer_.clear();
+    preload_offset_ = 0;
+
     // Check if a handle is currently open.
     if (file_handle_ != nullptr) {
         if (is_pipe_) {
@@ -175,7 +305,7 @@ champsim_trace_reader_t::read_next_standard_instruction(champsim_instr_t &instr)
     }
 
     // Read exactly one 64-byte standard ChampSim record.
-    size_t bytes_read = fread(&instr, 1, sizeof(champsim_instr_t), file_handle_);
+    size_t bytes_read = read_bytes(&instr, sizeof(champsim_instr_t));
     if (bytes_read < sizeof(champsim_instr_t)) {
         at_eof_ = true;
         return false;
@@ -196,7 +326,7 @@ champsim_trace_reader_t::read_next_cloudsuite_instruction(cloudsuite_instr_t &in
     }
 
     // Read exactly one 96-byte CloudSuite ChampSim record.
-    size_t bytes_read = fread(&instr, 1, sizeof(cloudsuite_instr_t), file_handle_);
+    size_t bytes_read = read_bytes(&instr, sizeof(cloudsuite_instr_t));
     if (bytes_read < sizeof(cloudsuite_instr_t)) {
         at_eof_ = true;
         return false;

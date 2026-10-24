@@ -248,6 +248,12 @@ extern dynamorio::droption::droption_t<uint64_t> op_trim_before_timestamp;
 extern dynamorio::droption::droption_t<uint64_t> op_trim_after_timestamp;
 extern dynamorio::droption::droption_t<bool> op_abort_on_invariant_error;
 extern dynamorio::droption::droption_t<bool> op_pt2ir_best_effort;
+// Path to offline ChampSim binary trace file (.trace, .gz, .xz).
+extern dynamorio::droption::droption_t<std::string> op_champsim_trace;
+// ChampSim trace format flag: "default", "standard", "cloudsuite", or "auto".
+extern dynamorio::droption::droption_t<std::string> op_champsim_format;
+// Shortcut flag indicating trace uses 96-byte CloudSuite format.
+extern dynamorio::droption::droption_t<bool> op_is_cloudsuite;
 
 } // namespace drmemtrace
 } // namespace dynamorio

@@ -1282,5 +1282,25 @@ droption_t<bool> op_pt2ir_best_effort(
     "conversion failed, syscall traces found to be empty, and non-fatal decode errors "
     "seen in converted syscall traces).");
 
+// Option specifying input ChampSim binary trace file.
+droption_t<std::string> op_champsim_trace(
+    DROPTION_SCOPE_ALL, "champsim_trace", "", "Path to ChampSim binary trace file",
+    "Specifies the path to an offline ChampSim binary trace (.trace, .gz, or .xz). "
+    "Both standard 64-byte traces and CloudSuite 96-byte traces are supported.");
+
+// Option specifying format of the ChampSim trace.
+droption_t<std::string> op_champsim_format(
+    DROPTION_SCOPE_ALL, "champsim_format", "auto", "Format of ChampSim trace: default|standard|cloudsuite|auto",
+    "Explicitly indicates whether the ChampSim trace is standard/default 64-byte format "
+    "or CloudSuite 96-byte format. Options are: 'default', 'standard', '64' (64-byte format with "
+    "2 stores and 4 loads), 'cloudsuite', 'cs', '96' (96-byte format with 4 stores, 4 loads, and ASID), "
+    "or 'auto' (automatic detection using instruction stride scoring).");
+
+// Shortcut boolean option to indicate CloudSuite trace format.
+droption_t<bool> op_is_cloudsuite(
+    DROPTION_SCOPE_ALL, "is_cloudsuite", false, "Flag indicating CloudSuite 96-byte trace format",
+    "Convenience flag. When set, forces the ChampSim reader to parse the trace using the "
+    "CloudSuite 96-byte format instead of the default 64-byte format.");
+
 } // namespace drmemtrace
 } // namespace dynamorio

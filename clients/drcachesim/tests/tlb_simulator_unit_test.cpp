@@ -1217,7 +1217,23 @@ unit_test_champsim_and_cloudsuite_reader()
     FILE *check_f = fopen(google_trace.c_str(), "rb");
     if (check_f != nullptr) {
         fclose(check_f);
-        // Create ChampSim trace reader.
+
+        // Test flag parsing helper:
+        assert(champsim_trace_reader_t::parse_format_string("default") == champsim_trace_format_t::FORMAT_STANDARD);
+        assert(champsim_trace_reader_t::parse_format_string("standard") == champsim_trace_format_t::FORMAT_STANDARD);
+        assert(champsim_trace_reader_t::parse_format_string("64") == champsim_trace_format_t::FORMAT_STANDARD);
+        assert(champsim_trace_reader_t::parse_format_string("cloudsuite") == champsim_trace_format_t::FORMAT_CLOUDSUITE);
+        assert(champsim_trace_reader_t::parse_format_string("cs") == champsim_trace_format_t::FORMAT_CLOUDSUITE);
+        assert(champsim_trace_reader_t::parse_format_string("96") == champsim_trace_format_t::FORMAT_CLOUDSUITE);
+        assert(champsim_trace_reader_t::parse_format_string("auto", /*is_cloudsuite_flag=*/true) == champsim_trace_format_t::FORMAT_CLOUDSUITE);
+
+        // Verify explicit format flag passed to constructor (CloudSuite format):
+        champsim_trace_reader_t flag_reader(google_trace, champsim_trace_format_t::FORMAT_CLOUDSUITE);
+        assert(flag_reader.open());
+        assert(flag_reader.is_cloudsuite());
+        flag_reader.close();
+
+        // Create ChampSim trace reader with auto-detection fallback.
         champsim_trace_reader_t real_reader(google_trace);
         // Verify open succeeds.
         assert(real_reader.open());

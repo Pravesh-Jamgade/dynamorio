@@ -108,4 +108,10 @@ clients/drcachesim/simulator/cpu/
   - Extended binary record with `destination_registers[4]`, `destination_memory[4]` (up to 4 memory stores per instruction), `source_memory[4]`, and `asid[2]` (Address Space Identifier).
   - Used by CloudSuite server and multi-process workloads.
 - **Decompression**: Automatic streaming decompression via parallel pipelines for `.gz`, `.xz`, and `.bz2` traces, as well as uncompressed `.trace` binary files.
+- **Trace Format Flags**:
+  - `-champsim_format <default|standard|cloudsuite|auto>`: Explicit command-line flag indicating trace layout.
+    - `default` / `standard` / `64`: Standard 64-byte ChampSim format (2 stores, 4 loads).
+    - `cloudsuite` / `cs` / `96`: CloudSuite 96-byte format (4 stores, 4 loads, ASID).
+    - `auto`: Heuristic auto-detection based on sequential instruction stride scoring.
+  - `-is_cloudsuite`: Convenient boolean shortcut flag indicating CloudSuite 96-byte format.
 - **DynamoRIO Unpacking**: Maps binary records into program-order `TRACE_TYPE_INSTR` fetch events, followed by all valid `TRACE_TYPE_READ` loads and `TRACE_TYPE_WRITE` stores, allowing seamless trace playback directly through `cpu_simulator_t::process_memref()`.

@@ -219,19 +219,58 @@ public:
                    uint64_t max_instructions = 0,
                    uint64_t print_interval = 100000);
 
-    // Query methods.
+    // Query and configuration methods.
+    // Return true if file or pipe handle is currently open.
     bool is_open() const { return file_handle_ != nullptr; }
+    // Return true if end-of-file was reached.
     bool is_eof() const { return at_eof_; }
+    // Return active trace format (FORMAT_STANDARD or FORMAT_CLOUDSUITE).
     champsim_trace_format_t get_format() const { return format_; }
+    // Return true if active format is CloudSuite.
     bool is_cloudsuite() const { return format_ == champsim_trace_format_t::FORMAT_CLOUDSUITE; }
+    // Return count of instructions parsed from trace.
     uint64_t instructions_read() const { return instructions_read_; }
+    // Return count of memref_t records emitted into simulator.
     uint64_t memrefs_emitted() const { return memrefs_emitted_; }
+    // Return original trace file path.
     const std::string &get_trace_path() const { return trace_path_; }
+
+    /**
+     * @brief Parses user-supplied format flag/string into champsim_trace_format_t enum.
+     *
+     * @param format_str Format name ("default", "standard", "cloudsuite", "cs", "64", "96", "auto").
+     * @param is_cloudsuite_flag Optional boolean flag (-is_cloudsuite) that overrides format_str.
+     * @return champsim_trace_format_t The parsed enum value.
+     */
+    static champsim_trace_format_t
+    parse_format_string(const std::string &format_str, bool is_cloudsuite_flag = false);
+
+    /**
+     * @brief Manually overrides the trace format after construction.
+     *
+     * @param format The desired format (FORMAT_STANDARD, FORMAT_CLOUDSUITE, or FORMAT_AUTO).
+     */
+    void
+    set_format(champsim_trace_format_t format)
+    {
+        // Store resolved format.
+        format_ = format;
+        // Store requested format override.
+        requested_format_ = format;
+    }
 
 private:
     // Probes trace file to detect whether it is standard 64-byte or CloudSuite 96-byte.
     void
     detect_format();
+
+    // Evaluates sequentiality score for a given candidate stride (64 or 96).
+    int
+    score_format_step(const std::vector<uint8_t> &data, size_t step) const;
+
+    // Reads n bytes from the preloaded buffer or file handle.
+    size_t
+    read_bytes(void *dest, size_t n);
 
     std::string trace_path_;                    // Path to the trace file.
     champsim_trace_format_t requested_format_;  // Format requested by caller.
@@ -244,6 +283,8 @@ private:
     uint64_t instructions_read_ = 0;            // Total ChampSim instruction records read.
     uint64_t memrefs_emitted_ = 0;              // Total memref_t records emitted.
     std::queue<memref_t> memref_queue_;         // Queue buffering memrefs for current instruction.
+    std::vector<uint8_t> preload_buffer_;       // Initial buffer used for format auto-detection.
+    size_t preload_offset_ = 0;                 // Current read cursor into preload_buffer_.
 };
 
 } // namespace drmemtrace
