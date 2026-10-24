@@ -181,8 +181,12 @@ done
 if [[ ! -x "$DRRUN" && $DRY_RUN -eq 0 ]]; then
     # Print error if launcher not found.
     echo "Error: DynamoRIO launcher not found at $DRRUN" >&2
-    # Suggest running build script.
-    echo "Please build the project first via: ./build.sh" >&2
+    # Suggest building DynamoRIO via build.sh drrun or cmake.
+    echo "Please build DynamoRIO first via:" >&2
+    # Suggest convenient helper command.
+    echo "  ./build.sh drrun" >&2
+    # Suggest manual cmake and ninja command.
+    echo "  (or: mkdir -p build && cd build && cmake -GNinja .. && ninja)" >&2
     # Exit with failure.
     exit 1
 fi

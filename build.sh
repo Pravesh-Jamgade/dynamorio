@@ -36,8 +36,33 @@ case "$CMD" in
         ;;
     # Simulator-only target.
     sim)
+        # Inform user of building the standalone simulator.
         echo "Building standalone simulator using $NPROC parallel jobs..."
+        # Compile standalone binary via Makefile.
         make -j"$NPROC" sim
+        ;;
+    # DynamoRIO runtime and tracer build target (drrun & drmemtrace).
+    drrun|cmake|runtime)
+        # Inform user of building DynamoRIO runtime.
+        echo "Building DynamoRIO runtime (drrun) and drcachesim tracer..."
+        # Create dedicated out-of-source build directory.
+        mkdir -p build && cd build
+        # Check if ninja generator is available on system.
+        if command -v ninja >/dev/null 2>&1; then
+            # Configure build using Ninja generator.
+            cmake -GNinja ..
+            # Compile using Ninja with parallel cores.
+            ninja -j"$NPROC"
+        else
+            # Fall back to standard CMake Unix Makefiles generator.
+            cmake ..
+            # Compile using Make with parallel cores.
+            make -j"$NPROC"
+        fi
+        # Return to repository root directory.
+        cd ..
+        # Display success message.
+        echo "DynamoRIO build complete! drrun is at build/bin64/drrun"
         ;;
     # Default target building everything.
     all|*)
