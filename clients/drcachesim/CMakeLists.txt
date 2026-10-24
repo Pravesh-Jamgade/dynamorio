@@ -211,6 +211,13 @@ add_exported_library(drmemtrace_simulator STATIC
   simulator/mmu/mmu_stats.cpp
   simulator/mmu/page_table_walker.cpp
   simulator/mmu/performance_model.cpp
+  simulator/cpu/three_level_cache.cpp
+  simulator/cpu/btb.cpp
+  simulator/cpu/reg_deps.cpp
+  simulator/cpu/rob.cpp
+  simulator/cpu/lsq.cpp
+  simulator/cpu/cpu_core.cpp
+  simulator/cpu/cpu_simulator.cpp
   )
 
 add_exported_library(drmemtrace_record_filter STATIC

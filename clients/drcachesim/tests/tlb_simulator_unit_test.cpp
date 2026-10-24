@@ -55,6 +55,8 @@
 #include "../simulator/cache_lru.h"
 // Cache statistics for external coupled PTW testing.
 #include "../simulator/cache_stats.h"
+// Complete Out-of-Order CPU and 3-level cache simulator.
+#include "../simulator/cpu/cpu_simulator.h"
 // Memory reference structure definition.
 #include "../common/memref.h"
 // Trace entry type definitions.
@@ -654,6 +656,215 @@ unit_test_performance_model_cpi_ipc()
     assert(sim.print_results());
 }
 
+// Test 7: Three-Level Data Cache Hierarchy (L1D -> L2 -> L3/LLC) and PTW Accesses.
+static void
+unit_test_three_level_cache()
+{
+    three_level_cache_knobs_t knobs;
+    knobs.num_cores = 1;
+    knobs.line_size = 64;
+    knobs.l1d_size = 4096;      // 4 KB L1D
+    knobs.l1d_assoc = 2;
+    knobs.l2_size = 16384;      // 16 KB L2
+    knobs.l2_assoc = 4;
+    knobs.l3_size = 65536;      // 64 KB L3
+    knobs.l3_assoc = 8;
+    knobs.l1d_latency = 4;
+    knobs.l2_latency = 12;
+    knobs.l3_latency = 35;
+    knobs.dram_latency = 150;
+
+    three_level_cache_t cache(knobs);
+
+    // 1. Cold access to 0x1000 misses L1D, L2, L3 and hits DRAM!
+    memref_t ref1 = generate_mem_ref(0x1000, 0x400000);
+    cache_access_result_t res1 = cache.request(0, ref1);
+    assert(res1.level == cache_hit_level_t::HIT_DRAM);
+    assert(res1.latency_cycles == 4 + 12 + 35 + 150);
+
+    // 2. Immediate re-access to 0x1000 must HIT in L1D!
+    cache_access_result_t res2 = cache.request(0, ref1);
+    assert(res2.level == cache_hit_level_t::HIT_L1D);
+    assert(res2.latency_cycles == 4);
+
+    // 3. Hardware Page Table Walker 8-byte PTE read to 0x2000 (cold -> DRAM).
+    cache_access_result_t ptw_res1 = cache.ptw_request(0, 0x2000);
+    assert(ptw_res1.level == cache_hit_level_t::HIT_DRAM);
+
+    // 4. Second PTW access to 0x2008 (same 64B cache line as 0x2000) must HIT in L1D!
+    cache_access_result_t ptw_res2 = cache.ptw_request(0, 0x2008);
+    assert(ptw_res2.level == cache_hit_level_t::HIT_L1D);
+    assert(ptw_res2.latency_cycles == 4);
+}
+
+// Test 8: Branch Target Buffer (BTB), Branch Predictor, and Return Address Stack (RAS).
+static void
+unit_test_btb_and_branch_predictor()
+{
+    branch_predictor_t bp(/*btb_entries=*/128, /*bimodal_entries=*/256, /*ras_depth=*/16);
+
+    // 1. Conditional branch at PC 0x401000 with target 0x401050.
+    addr_t br_pc = 0x401000;
+    addr_t target = 0x401050;
+
+    // First execution: bimodal starts at Weakly Taken (2), BTB is cold -> predicts taken, target 0.
+    branch_prediction_t pred1 = bp.update(br_pc, cpu_op_type_t::OP_BRANCH_COND,
+                                          /*actual_taken=*/true, target);
+    assert(pred1.actual_taken == true);
+
+    // Second execution of same branch taken: BTB should now predict target 0x401050!
+    branch_prediction_t pred2 = bp.update(br_pc, cpu_op_type_t::OP_BRANCH_COND,
+                                          /*actual_taken=*/true, target);
+    assert(pred2.predicted_taken == true);
+    assert(pred2.predicted_target == target);
+    assert(!pred2.is_mispredicted());
+
+    // 2. Function Call and Return Address Stack (RAS).
+    addr_t call_pc = 0x402000;
+    addr_t call_target = 0x500000;
+    addr_t ret_pc = 0x500040;
+    addr_t expected_ret = call_pc + 5; // Call instruction length 5 bytes.
+
+    // Encounter CALL: pushes expected_ret to RAS.
+    bp.update(call_pc, cpu_op_type_t::OP_CALL, /*actual_taken=*/true,
+              call_target, /*return_addr=*/expected_ret);
+
+    // Encounter RETURN: pops from RAS.
+    branch_prediction_t ret_pred = bp.predict(ret_pc, cpu_op_type_t::OP_RETURN);
+    assert(ret_pred.predicted_target == expected_ret);
+}
+
+// Test 9: Reorder Buffer (ROB) and Register Dependency Scoreboard.
+static void
+unit_test_rob_and_reg_deps()
+{
+    // Configure a small 4-entry ROB and scoreboard.
+    rob_t rob(4);
+    register_scoreboard_t scoreboard(32);
+
+    // Instruction 1: Produces R1 at cycle 10.
+    dyn_instruction_t i1;
+    i1.seq_id = 1;
+    i1.pc = 0x400000;
+    i1.dest_reg = 1;
+    assert(rob.dispatch(i1));
+    scoreboard.allocate_destination(i1);
+
+    // Instruction 2: Consumes R1, produces R2.
+    dyn_instruction_t i2;
+    i2.seq_id = 2;
+    i2.pc = 0x400004;
+    i2.src_regs.push_back(1);
+    i2.dest_reg = 2;
+    assert(rob.dispatch(i2));
+    scoreboard.allocate_destination(i2);
+
+    // At cycle 5, R1 is NOT ready.
+    uint64_t issue_cycle = 0;
+    assert(!scoreboard.check_sources_ready(i2, 5, issue_cycle));
+    assert(issue_cycle == UINT64_MAX); // Waiting on unready producer.
+
+    // At cycle 10, i1 completes writeback.
+    scoreboard.mark_writeback(i1, 10);
+    assert(rob.mark_ready(1, 10));
+
+    // Now at cycle 10, i2's source R1 is ready!
+    assert(scoreboard.check_sources_ready(i2, 10, issue_cycle));
+    assert(issue_cycle == 10);
+
+    // Commit at cycle 10: i1 retires, but i2 cannot retire (not yet ready).
+    std::vector<dyn_instruction_t> committed;
+    size_t count = rob.commit(/*commit_width=*/2, 10, committed);
+    assert(count == 1);
+    assert(committed[0].seq_id == 1);
+    assert(rob.size() == 1); // i2 remains in ROB.
+
+    // Mark i2 ready at cycle 12 and commit.
+    assert(rob.mark_ready(2, 12));
+    committed.clear();
+    count = rob.commit(/*commit_width=*/2, 12, committed);
+    assert(count == 1);
+    assert(committed[0].seq_id == 2);
+    assert(rob.empty());
+}
+
+// Test 10: Load-Store Queue (LSQ) and Store-to-Load Forwarding.
+static void
+unit_test_lsq_and_forwarding()
+{
+    lsq_t lsq(16, 16);
+
+    // Store instruction at address 0x7fff0000 with 8 bytes.
+    dyn_instruction_t st;
+    st.seq_id = 10;
+    st.op_type = cpu_op_type_t::OP_STORE;
+    st.mem_addr = 0x7fff0000;
+    st.mem_size = 8;
+    assert(lsq.dispatch_store(st));
+
+    // Load instruction to the SAME address 0x7fff0000 with 8 bytes.
+    dyn_instruction_t ld;
+    ld.seq_id = 11;
+    ld.op_type = cpu_op_type_t::OP_LOAD;
+    ld.mem_addr = 0x7fff0000;
+    ld.mem_size = 8;
+    assert(lsq.dispatch_load(ld));
+
+    // Probe store forwarding: must hit!
+    uint64_t fwd_id = 0;
+    assert(lsq.check_store_forwarding(ld.seq_id, ld.mem_addr, ld.mem_size, fwd_id));
+    assert(fwd_id == 10);
+    assert(lsq.store_forwardings() == 1);
+
+    // Load to a different address 0x7fff1000: must NOT forward!
+    uint64_t fwd_id2 = 0;
+    assert(!lsq.check_store_forwarding(12, 0x7fff1000, 8, fwd_id2));
+}
+
+// Test 11: Full Out-of-Order CPU & 3-Level Cache Simulator End-to-End.
+static void
+unit_test_ooo_cpu_simulator()
+{
+    cpu_simulator_knobs_t knobs;
+    knobs.num_cores = 1;
+    knobs.fetch_width = 4;
+    knobs.commit_width = 4;
+    knobs.rob_capacity = 32;
+    knobs.lq_capacity = 16;
+    knobs.sq_capacity = 16;
+    knobs.l1d_size = 4096;
+    knobs.l2_size = 16384;
+    knobs.l3_size = 65536;
+
+    cpu_simulator_t sim(knobs);
+
+    // Feed a sequence of instructions, stores, and loads.
+    const memref_pid_t pid = 5555;
+    for (int i = 0; i < 20; ++i) {
+        addr_t pc = 0x400000 + i * 4;
+        assert(sim.process_memref(generate_mem_ref(pc, pc, pid, 1, TRACE_TYPE_INSTR)));
+        // Every 4th instruction do a store followed by a load.
+        if (i % 4 == 0) {
+            addr_t addr = 0x7fff2000 + i * 8;
+            assert(sim.process_memref(generate_mem_ref(addr, pc, pid, 1, TRACE_TYPE_WRITE)));
+            assert(sim.process_memref(generate_mem_ref(addr, pc, pid, 1, TRACE_TYPE_READ)));
+        }
+    }
+
+    cpu_core_t *core = sim.get_core(0);
+    assert(core != nullptr);
+    core->flush_and_drain_pipeline();
+
+    // Verify all instructions retired from the ROB.
+    assert(core->total_instructions_retired() > 20);
+    assert(core->get_current_cycle() > 20);
+    assert(core->get_ipc() > 0.0);
+    assert(core->get_cpi() > 0.0);
+
+    // Verify results print cleanly.
+    assert(sim.print_results());
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -672,6 +883,16 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_replacement_policies_and_shootdowns();
     // Run performance model (instructions, cycles, CPI_cache_stalls, CPI_tlb_stalls, IPC) unit test.
     unit_test_performance_model_cpi_ipc();
+    // Run 3-level data cache hierarchy unit test.
+    unit_test_three_level_cache();
+    // Run BTB, branch predictor, and RAS unit test.
+    unit_test_btb_and_branch_predictor();
+    // Run ROB and Register Dependency Scoreboard unit test.
+    unit_test_rob_and_reg_deps();
+    // Run LSQ and Store-to-Load forwarding unit test.
+    unit_test_lsq_and_forwarding();
+    // Run full Out-of-Order CPU Core and 3-level cache simulator unit test.
+    unit_test_ooo_cpu_simulator();
 }
 
 } // namespace drmemtrace
