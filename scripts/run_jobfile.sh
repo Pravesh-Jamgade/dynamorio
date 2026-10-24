@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# run_jobfile.sh: Jobfile Dispatcher for DynamoRIO Benchmark Experiments
+# run_jobfile.sh: Parallel Job Dispatcher for DynamoRIO Benchmark Experiments
 #
-# Reads a batch jobfile (default: jobs/jobfile.txt) and sequentially or selectively
-# executes simulation experiments under the cycle-accurate OoO CPU & cache simulator.
+# Reads a clean jobfile containing commands (default: jobs/jobfile.txt) and executes
+# N jobs at a time concurrently using native bash process pooling.
 # Generates per-job console logs and aggregates CSV simulation results into a summary.
 # ==============================================================================
 
@@ -14,16 +14,18 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # Determine repository root directory.
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# Set default jobfile path.
+# Set default jobfile path containing clean commands.
 JOBFILE="${REPO_ROOT}/jobs/jobfile.txt"
 # Set default results directory.
 OUT_DIR="${REPO_ROOT}/results"
+# Default concurrency: number of jobs to run at a time (default: 1).
+CONCURRENCY=1
 # Flag for dry run.
 DRY_RUN=0
 # Flag for stats-only report.
 STATS_ONLY=0
-# Optional list or range of job numbers to run (empty means all).
-TARGET_JOBS=""
+# Optional list or range of job line numbers to run (empty means all).
+TARGET_LINES=""
 
 # Define usage information function.
 usage() {
@@ -31,8 +33,10 @@ usage() {
     echo "Usage: $0 [options]"
     # Explain jobfile option.
     echo "  --file <path>       Path to jobfile command list (default: jobs/jobfile.txt)"
-    # Explain jobs filter option.
-    echo "  --jobs <range>      Comma-separated job numbers or ranges (e.g. 1,3,5-8,14)"
+    # Explain concurrency option.
+    echo "  -n, -j, --parallel  Number of jobs to run concurrently at a time (default: 1)"
+    # Explain lines filter option.
+    echo "  --lines, --jobs     Comma-separated line numbers or ranges (e.g. 1,3,5-8,14)"
     # Explain outdir option.
     echo "  --outdir <dir>      Output directory for logs and stats (default: results)"
     # Explain dry-run option.
@@ -56,10 +60,17 @@ while [[ $# -gt 0 ]]; do
             # Shift past key and value.
             shift 2
             ;;
-        # Handle jobs selection option.
-        --jobs)
-            # Store target jobs string.
-            TARGET_JOBS="$2"
+        # Handle concurrency option (-n, -j, --parallel).
+        -n|-j|--parallel)
+            # Store concurrency limit.
+            CONCURRENCY="$2"
+            # Shift past key and value.
+            shift 2
+            ;;
+        # Handle line/job selection option.
+        --lines|--jobs)
+            # Store target lines string.
+            TARGET_LINES="$2"
             # Shift past key and value.
             shift 2
             ;;
@@ -110,17 +121,17 @@ if [[ -d "${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master" && ! -f "${REPO_ROOT}/ap
     (cd "${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master" && make && ./dbgen -s 0.01)
 fi
 
-# Function to test whether a given job number is in the requested range.
-job_is_selected() {
-    # Extract candidate job index.
-    local j_idx="$1"
-    # If no filter specified, all jobs are selected.
-    if [[ -z "$TARGET_JOBS" ]]; then
+# Function to test whether a given line number is in the requested range.
+line_is_selected() {
+    # Extract candidate line index.
+    local l_idx="$1"
+    # If no filter specified, all lines are selected.
+    if [[ -z "$TARGET_LINES" ]]; then
         # Return true.
         return 0
     fi
-    # Split TARGET_JOBS by commas.
-    IFS=',' read -ra PARTS <<< "$TARGET_JOBS"
+    # Split TARGET_LINES by commas.
+    IFS=',' read -ra PARTS <<< "$TARGET_LINES"
     # Iterate over individual parts.
     for part in "${PARTS[@]}"; do
         # Check if part is a range (e.g. 5-8).
@@ -129,21 +140,21 @@ job_is_selected() {
             local r_start="${BASH_REMATCH[1]}"
             # Extract end of range.
             local r_end="${BASH_REMATCH[2]}"
-            # Check if job index falls within range.
-            if (( j_idx >= r_start && j_idx <= r_end )); then
+            # Check if line index falls within range.
+            if (( l_idx >= r_start && l_idx <= r_end )); then
                 # Return true.
                 return 0
             fi
         # Check if part is a single number.
         elif [[ "$part" =~ ^[0-9]+$ ]]; then
             # Check for exact match.
-            if (( j_idx == part )); then
+            if (( l_idx == part )); then
                 # Return true.
                 return 0
             fi
         fi
     done
-    # Job not selected.
+    # Line not selected.
     return 1
 }
 
@@ -154,12 +165,12 @@ print_summary_table() {
     echo "                            SIMULATION EXPERIMENT RESULTS SUMMARY TABLE                           "
     echo "=================================================================================================="
     # Print column headers.
-    printf "%-8s | %-10s | %-8s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
-        "Job" "App" "Profile" "Retired" "Cycles" "IPC" "L1D Miss%" "L2 Miss%" "PTW Walks"
-    echo "---------+------------+----------+------------+------------+--------+------------+------------+----------"
+    printf "%-30s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
+        "Experiment" "Retired" "Cycles" "IPC" "L1D Miss%" "L2 Miss%" "PTW Walks"
+    echo "-------------------------------+------------+------------+--------+------------+------------+----------"
 
-    # Search for all generated stats_job*.log files in OUT_DIR.
-    for sfile in "${OUT_DIR}"/stats_job*.log; do
+    # Search for all generated stats_*.log files in OUT_DIR.
+    for sfile in "${OUT_DIR}"/stats_*.log; do
         # Skip if glob didn't match any file.
         [[ -f "$sfile" ]] || continue
 
@@ -168,20 +179,10 @@ print_summary_table() {
         # Get basename without directory.
         fname="$(basename "$sfile")"
 
-        # Extract job number (e.g. job01).
-        local jid
-        # Parse job ID prefix.
-        jid="$(echo "$fname" | grep -o -E 'job[0-9]+' || echo "N/A")"
-
-        # Extract application name.
-        local app
-        # Match application name from filename pattern stats_jobXX_<app>_...log.
-        app="$(echo "$fname" | sed -E 's/stats_job[0-9]+_([^_]+)_.*/\1/')"
-
-        # Extract profile tag from filename.
-        local profile
-        # Determine profile from filename suffix.
-        profile="$(echo "$fname" | sed -E 's/stats_job[0-9]+_[^_]+_([^\.]+)\.log/\1/')"
+        # Format experiment name (strip stats_ prefix and .log suffix).
+        local exp_name
+        # Clean experiment name string.
+        exp_name="$(echo "$fname" | sed -E 's/^stats_//; s/\.log$//')"
 
         # Extract scalar metrics using awk.
         local retired
@@ -204,8 +205,8 @@ print_summary_table() {
         ptw="$(awk -F', *' '$1=="PTW walks" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
 
         # Format and display row.
-        printf "%-8s | %-10s | %-8s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
-            "$jid" "$app" "$profile" "${retired:-N/A}" "${cycles:-N/A}" "${ipc:-N/A}" \
+        printf "%-30s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
+            "$exp_name" "${retired:-N/A}" "${cycles:-N/A}" "${ipc:-N/A}" \
             "${l1d_miss:-N/A}" "${l2_miss:-N/A}" "${ptw:-N/A}"
     done
     echo "=================================================================================================="
@@ -228,94 +229,114 @@ if [[ ! -f "$JOBFILE" ]]; then
     exit 1
 fi
 
-# Track current job counter.
-JOB_COUNTER=0
-# Track total jobs executed.
-JOBS_EXECUTED=0
+# Function to execute a single job in the background and log its timing and output.
+execute_job() {
+    # Extract line number.
+    local line_num="$1"
+    # Extract command string.
+    local cmd="$2"
+    # Derive console log filename.
+    local console_log="${OUT_DIR}/console_line$(printf "%02d" "$line_num").log"
+    # Extract benchmark name from command for display.
+    local app_name
+    # Parse application binary name from after '--'.
+    app_name="$(echo "$cmd" | sed -E 's/.*--[[:space:]]+(\.\/)?apps\///' | awk '{print $1}')"
+
+    # Print start notification.
+    echo "[START] Job #${line_num} (${app_name}) running concurrently..."
+
+    # Record start time.
+    local t_start
+    # Capture start epoch.
+    t_start="$(date +%s)"
+
+    # Execute command, redirecting both stdout and stderr to the dedicated console log.
+    eval "$cmd" > "$console_log" 2>&1
+    # Capture exit code.
+    local ret=$?
+
+    # Record end time.
+    local t_end
+    # Capture end epoch.
+    t_end="$(date +%s)"
+    # Compute elapsed seconds.
+    local dur=$(( t_end - t_start ))
+
+    # Check return code.
+    if [[ $ret -eq 0 ]]; then
+        # Print completion message.
+        echo "[DONE]  Job #${line_num} (${app_name}) completed successfully in ${dur}s. (Log: ${console_log})"
+    else
+        # Print failure warning.
+        echo "[FAIL]  Job #${line_num} (${app_name}) failed with exit code ${ret} after ${dur}s. (Log: ${console_log})" >&2
+    fi
+}
 
 # Print execution banner.
 echo "================================================================================"
 echo " Starting Batch Job Execution from: ${JOBFILE}"
-if [[ -n "$TARGET_JOBS" ]]; then
-    echo " Filter: Running only jobs in set: ${TARGET_JOBS}"
+echo " Concurrency: Running up to ${CONCURRENCY} job(s) at a time"
+if [[ -n "$TARGET_LINES" ]]; then
+    echo " Filter: Running only jobs at line(s): ${TARGET_LINES}"
 fi
 if [[ $DRY_RUN -eq 1 ]]; then
     echo " Mode: DRY RUN (commands will be displayed but not executed)"
 fi
 echo "================================================================================"
 
+# Initialize line counter.
+LINE_NUM=0
+# Initialize queued count.
+TOTAL_QUEUED=0
+
 # Read jobfile line by line.
 while IFS= read -r line || [[ -n "$line" ]]; do
-    # Trim leading and trailing whitespace.
+    # Trim whitespace.
     trimmed="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
-    # Check if line is a comment or empty.
+    # Skip comments or empty lines.
     if [[ "$trimmed" =~ ^#.*$ || -z "$trimmed" ]]; then
-        # Check if comment line denotes a job header (e.g. # --- Job 03: ... ---).
-        if [[ "$trimmed" =~ ^#[[:space:]]*---[[:space:]]*Job[[:space:]]+([0-9]+):[[:space:]]*(.*)[[:space:]]*--- ]]; then
-            # Extract job number from comment.
-            CURRENT_JOB_NUM="${BASH_REMATCH[1]}"
-            # Extract job description.
-            CURRENT_JOB_DESC="${BASH_REMATCH[2]}"
-        fi
-        # Skip comment or blank line.
+        # Continue to next line.
         continue
     fi
 
-    # Increment job counter for each executable command encountered.
-    JOB_COUNTER=$(( JOB_COUNTER + 1 ))
+    # Increment line number counter for every executable command.
+    LINE_NUM=$(( LINE_NUM + 1 ))
 
-    # Determine numeric index (use header number if available, else sequential counter).
-    JOB_NUM="${CURRENT_JOB_NUM:-$JOB_COUNTER}"
-    # Remove leading zeros for arithmetic comparison.
-    JOB_NUM_INT=$(( 10#$JOB_NUM ))
-
-    # Check if job is selected by user filter.
-    if ! job_is_selected "$JOB_NUM_INT"; then
-        # Skip non-selected job.
+    # Check if this line is selected by user filter.
+    if ! line_is_selected "$LINE_NUM"; then
+        # Skip line.
         continue
     fi
 
-    # Increment executed count.
-    JOBS_EXECUTED=$(( JOBS_EXECUTED + 1 ))
+    # Increment queued count.
+    TOTAL_QUEUED=$(( TOTAL_QUEUED + 1 ))
 
-    # Determine console log filename corresponding to this job.
-    CONSOLE_LOG="${OUT_DIR}/console_job$(printf "%02d" "$JOB_NUM_INT").log"
-
-    # Print job header.
-    echo "--------------------------------------------------------------------------------"
-    echo " [JOB $(printf "%02d" "$JOB_NUM_INT")] ${CURRENT_JOB_DESC:-Command line run}"
-    echo " [CMD] ${trimmed}"
-    echo " [LOG] Console: ${CONSOLE_LOG}"
-    echo "--------------------------------------------------------------------------------"
-
-    # If dry run, print command and continue.
+    # If dry run mode, print command and continue.
     if [[ $DRY_RUN -eq 1 ]]; then
-        # Print dry-run notice.
-        echo "[DRY-RUN] Command skipped."
-        # Continue to next job.
+        # Print job command.
+        echo "[DRY-RUN] Job #${LINE_NUM}: ${trimmed}"
+        # Move to next line.
         continue
     fi
 
-    # Record start timestamp.
-    start_ts="$(date +%s)"
+    # Process pooling: if active background jobs have reached concurrency limit, wait for one to finish.
+    while (( $(jobs -r -p | wc -l) >= CONCURRENCY )); do
+        # Wait for any child job to finish (supported natively in bash 4.3+).
+        wait -n 2>/dev/null || sleep 0.5
+    done
 
-    # Execute the simulation command from the jobfile line, piping output to console log.
-    eval "${trimmed}" 2>&1 | tee "$CONSOLE_LOG"
+    # Launch job in background with concurrency pooling.
+    execute_job "$LINE_NUM" "$trimmed" &
 
-    # Record end timestamp.
-    end_ts="$(date +%s)"
-    # Compute elapsed seconds.
-    elapsed=$(( end_ts - start_ts ))
-
-    # Print completion status.
-    echo " [DONE] Job $(printf "%02d" "$JOB_NUM_INT") completed in ${elapsed}s."
-    echo ""
 done < "$JOBFILE"
 
-# Print execution summary banner.
+# Wait for all remaining background jobs to finish.
+wait
+
+# Print completion banner.
 echo "================================================================================"
-echo " Batch processing finished! Executed ${JOBS_EXECUTED} jobs."
+echo " All ${TOTAL_QUEUED} queued job(s) finished!"
 echo "================================================================================"
 echo ""
 

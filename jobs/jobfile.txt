@@ -1,75 +1,21 @@
-# ==============================================================================
-# jobfile.txt: Executable Command List for All Benchmarks with Varying Inputs
-# 
-# Run sequentially:
-#   while IFS= read -r cmd; do [[ "$cmd" =~ ^#.*$ || -z "$cmd" ]] && continue; eval "$cmd"; done < jobs/jobfile.txt
-#
-# Run via job runner script:
-#   ./scripts/run_jobfile.sh --file jobs/jobfile.txt
-#
-# Run in parallel with GNU parallel (e.g. 4 concurrent simulation workers):
-#   parallel -j 4 < jobs/jobfile.txt
-# ==============================================================================
-
-# --- Job 01: Hello baseline sanity run (o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 100000 -stats_file results/stats_job01_hello_default.log -- ./apps/hello
-
-# --- Job 02: Hello server configuration run (o3_server.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 100000 -stats_file results/stats_job02_hello_server.log -- ./apps/hello
-
-# --- Job 03: BTree Tiny (1K elements, 100 lookups, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 100000 -stats_file results/stats_job03_btree_tiny.log -- ./apps/BTree 1000 100
-
-# --- Job 04: BTree Small (10K elements, 1K lookups, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 1000000 -stats_file results/stats_job04_btree_small.log -- ./apps/BTree 10000 1000
-
-# --- Job 05: BTree Medium (100K elements, 10K lookups, o3_server.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 2000000 -stats_file results/stats_job05_btree_medium.log -- ./apps/BTree 100000 10000
-
-# --- Job 06: BTree Large (1M elements, 100K lookups, o3_server.ini, 50M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 5000000 -stats_file results/stats_job06_btree_large.log -- ./apps/BTree 1000000 100000
-
-# --- Job 07: BTree Huge (10M elements, 1M lookups, o3_server.ini, 50M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_job07_btree_huge.log -- ./apps/BTree 10000000 1000000
-
-# --- Job 08: GUPS Smoke (256 MB table, o3_default.ini, 5M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -sim_refs 5000000 -heartbeat_interval 1000000 -stats_file results/stats_job08_gups_256mb.log -- ./apps/gups 0
-
-# --- Job 09: GUPS Small Desktop (1 GB table, o3_default.ini, 10M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -sim_refs 10000000 -heartbeat_interval 2000000 -stats_file results/stats_job09_gups_1gb_default.log -- ./apps/gups 1
-
-# --- Job 10: GUPS Small Server (1 GB table, o3_server.ini, 10M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 10000000 -heartbeat_interval 2000000 -stats_file results/stats_job10_gups_1gb_server.log -- ./apps/gups 1
-
-# --- Job 11: GUPS Medium Server (4 GB table, o3_server.ini, 20M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 20000000 -heartbeat_interval 5000000 -stats_file results/stats_job11_gups_4gb_server.log -- ./apps/gups 4
-
-# --- Job 12: GUPS Large Server (16 GB table, o3_server.ini, 30M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 30000000 -heartbeat_interval 5000000 -stats_file results/stats_job12_gups_16gb_server.log -- ./apps/gups 16
-
-# --- Job 13: GUPS Huge Server (64 GB table on 512GB RAM server, o3_server.ini, 50M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_job13_gups_64gb_server.log -- ./apps/gups 64
-
-# --- Job 14: HashJoin Tiny (150 cust, 1500 orders, hash 17, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 200000 -stats_file results/stats_job14_hashjoin_tiny.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 150 apps/hashjoin/tpch-dbgen-master/orders.tbl 1500 17 1
-
-# --- Job 15: HashJoin Small (500 cust, 5000 orders, hash 251, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 1000000 -stats_file results/stats_job15_hashjoin_small.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 500 apps/hashjoin/tpch-dbgen-master/orders.tbl 5000 251 1
-
-# --- Job 16: HashJoin Medium (1000 cust, 10000 orders, hash 4093, o3_server.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 2000000 -stats_file results/stats_job16_hashjoin_medium.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 1000 apps/hashjoin/tpch-dbgen-master/orders.tbl 10000 4093 1
-
-# --- Job 17: HashJoin Large (1500 cust, 15000 orders, hash 16381, o3_server.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 5000000 -stats_file results/stats_job17_hashjoin_large.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 1500 apps/hashjoin/tpch-dbgen-master/orders.tbl 15000 16381 1
-
-# --- Job 18: XSBench Tiny (small grid, 100 particles, 100 lookups, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 500000 -stats_file results/stats_job18_xsbench_tiny.log -- ./apps/XSBench -s small -g 100 -p 100 -l 100
-
-# --- Job 19: XSBench Small (small grid, 500 particles, 1000 lookups, o3_default.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 2000000 -stats_file results/stats_job19_xsbench_small.log -- ./apps/XSBench -s small -g 500 -p 500 -l 1000
-
-# --- Job 20: XSBench Medium (small grid, 1000 particles, 5000 lookups, o3_server.ini) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 5000000 -stats_file results/stats_job20_xsbench_medium.log -- ./apps/XSBench -s small -g 1000 -p 1000 -l 5000
-
-# --- Job 21: XSBench Large (large grid, 1000 particles, 10000 lookups, o3_server.ini, 50M sim_refs) ---
-./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_job21_xsbench_large.log -- ./apps/XSBench -s large -g 1000 -p 1000 -l 10000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 100000 -stats_file results/stats_hello_default.log -- ./apps/hello
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 100000 -stats_file results/stats_hello_server.log -- ./apps/hello
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 100000 -stats_file results/stats_btree_1k_100.log -- ./apps/BTree 1000 100
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 1000000 -stats_file results/stats_btree_10k_1k.log -- ./apps/BTree 10000 1000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 2000000 -stats_file results/stats_btree_100k_10k.log -- ./apps/BTree 100000 10000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 5000000 -stats_file results/stats_btree_1m_100k.log -- ./apps/BTree 1000000 100000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_btree_10m_1m.log -- ./apps/BTree 10000000 1000000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -sim_refs 5000000 -heartbeat_interval 1000000 -stats_file results/stats_gups_256mb.log -- ./apps/gups 0
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -sim_refs 10000000 -heartbeat_interval 2000000 -stats_file results/stats_gups_1gb_default.log -- ./apps/gups 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 10000000 -heartbeat_interval 2000000 -stats_file results/stats_gups_1gb_server.log -- ./apps/gups 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 20000000 -heartbeat_interval 5000000 -stats_file results/stats_gups_4gb_server.log -- ./apps/gups 4
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 30000000 -heartbeat_interval 5000000 -stats_file results/stats_gups_16gb_server.log -- ./apps/gups 16
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_gups_64gb_server.log -- ./apps/gups 64
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 200000 -stats_file results/stats_hashjoin_tiny.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 150 apps/hashjoin/tpch-dbgen-master/orders.tbl 1500 17 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 1000000 -stats_file results/stats_hashjoin_small.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 500 apps/hashjoin/tpch-dbgen-master/orders.tbl 5000 251 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 2000000 -stats_file results/stats_hashjoin_medium.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 1000 apps/hashjoin/tpch-dbgen-master/orders.tbl 10000 4093 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 5000000 -stats_file results/stats_hashjoin_large.log -- ./apps/hashjoin/query10 murmur3 apps/hashjoin/tpch-dbgen-master/customer.tbl 1500 apps/hashjoin/tpch-dbgen-master/orders.tbl 15000 16381 1
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 500000 -stats_file results/stats_xsbench_tiny.log -- ./apps/XSBench -s small -g 100 -p 100 -l 100
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_default.ini -heartbeat_interval 2000000 -stats_file results/stats_xsbench_small.log -- ./apps/XSBench -s small -g 500 -p 500 -l 1000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 5000000 -stats_file results/stats_xsbench_medium.log -- ./apps/XSBench -s small -g 1000 -p 1000 -l 5000
+./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -sim_refs 50000000 -heartbeat_interval 10000000 -stats_file results/stats_xsbench_large.log -- ./apps/XSBench -s large -g 1000 -p 1000 -l 10000
