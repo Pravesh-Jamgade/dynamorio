@@ -80,8 +80,15 @@ case "$CMD" in
         fi
         # Return to repository root directory.
         cd ..
+        # Ensure root bin64 points to build/bin64 for universal compatibility.
+        if [[ ! -L bin64 ]]; then
+            # Remove any stale in-source bin64 directory.
+            rm -rf bin64
+            # Create symlink from bin64 to build/bin64.
+            ln -s build/bin64 bin64
+        fi
         # Display success message.
-        echo "DynamoRIO build complete! drrun is at build/bin64/drrun"
+        echo "DynamoRIO build complete! drrun is at build/bin64/drrun (and bin64/drrun)"
         ;;
     # Default target building everything.
     all|*)
