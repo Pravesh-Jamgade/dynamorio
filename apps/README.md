@@ -239,3 +239,180 @@ awk -F', *' '$1=="ipc" {print FILENAME, $2}' results/stats_*_smoke.log
 # Extract Page Table Walks:
 awk -F', *' '$1=="PTW walks" {print FILENAME, $2}' results/stats_*_smoke.log
 ```
+
+---
+
+## 5. Region of Interest (ROI) & Function-Level Simulation
+
+When benchmarking large applications (e.g. GUPS with 64GB table allocation, BTree with 10M elements, or TPC-H database table generation), simulating the entire execution from `main()` spends millions of cycles in setup, libc dynamic linking, and memory allocation.
+
+DynamoRIO supports isolating and simulating **only the critical computational kernel** using Region of Interest (ROI) markers or function filters.
+
+### Method 1: Function Markers via `roi_begin()` / `roi_end()` (Zero External Dependencies)
+
+Define empty, non-inlined functions at the boundaries of your hot loop:
+
+```c
+// Prevent compiler from inlining boundary functions
+__attribute__((noinline)) void roi_begin() {
+    __asm__ volatile("" : : : "memory");
+}
+
+__attribute__((noinline)) void roi_end() {
+    __asm__ volatile("" : : : "memory");
+}
+
+int main() {
+    // 1. Setup / Memory Allocation (SKIPPED)
+    initialize_huge_tables();
+
+    // 2. Start of Region of Interest
+    roi_begin();
+
+    // >>> ONLY THIS CODE IS SIMULATED <<<
+    run_benchmark_kernel();
+
+    // 3. End of Region of Interest
+    roi_end();
+
+    // 4. Teardown / Verification (SKIPPED)
+    verify_and_cleanup();
+    return 0;
+}
+```
+
+* **Compilation**: Compile normally with standard `gcc` (no DynamoRIO headers or libraries needed):
+  ```bash
+  gcc -O3 my_app.c -o my_app
+  ```
+* **Execution**: Pass `-record_function` flags to `drrun`:
+  ```bash
+  ./build/bin64/drrun -t drmemtrace \
+    -record_function "roi_begin|0" \
+    -record_function "roi_end|0" \
+    -simulator_type cpu \
+    -cpu_config configs/o3_server.ini \
+    -- ./my_app
+  ```
+
+---
+
+### Method 2: DynamoRIO Native Start/Stop API (`dr_app_start()` / `dr_app_stop()`)
+
+The official DynamoRIO application interface allows the process to run at 100% native CPU hardware speed (zero binary instrumentation overhead) until `dr_app_start()` is reached:
+
+```c
+#include "dr_api.h"
+
+int main() {
+    // Runs at full native hardware clock speed
+    allocate_64gb_memory();
+
+    // Attach DynamoRIO and start cycle-accurate simulation
+    dr_app_start();
+
+    // === Region of Interest ===
+    run_parallel_kernel();
+
+    // Detach DynamoRIO and return to native execution
+    dr_app_stop();
+
+    free_memory();
+    return 0;
+}
+```
+
+* **Compilation**: Link against DynamoRIO:
+  ```bash
+  gcc -O3 my_app.c \
+    -I/media/pravesh/Storage/code/dyn/dynamorio/build/include \
+    -L/media/pravesh/Storage/code/dyn/dynamorio/build/lib64/release \
+    -ldynamorio \
+    -o my_app
+  ```
+* **Execution**: Run with standard `drrun` (no special flags required):
+  ```bash
+  ./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -- ./my_app
+  ```
+
+---
+
+### Method 3: Instruction Window ROI (Zero Code Modifications)
+
+If you do not wish to modify application source code, specify instruction thresholds on the command line:
+
+* `-trace_after_instrs <N>`: Fast-forward natively through the first $N$ instructions (skip startup/loading).
+* `-trace_for_instrs <M>`: Simulate only the subsequent $M$ instructions (ROI window), then terminate.
+
+```bash
+# Skip first 100M instructions of setup, simulate next 20M instructions of ROI:
+./build/bin64/drrun -t drmemtrace \
+  -trace_after_instrs 100000000 \
+  -trace_for_instrs 20000000 \
+  -simulator_type cpu \
+  -cpu_config configs/o3_server.ini \
+  -stats_file results/stats_roi.log \
+  -- ./apps/gups 1
+```
+
+---
+
+### Method 4: Simulating Specific Target Functions
+
+To simulate only specific routines (e.g. `btree_search` and `btree_insert`):
+
+```c
+#include "dr_api.h"
+
+__attribute__((noinline)) int btree_search(btree_t *tree, int key) {
+    dr_app_start();
+    int res = internal_search(tree, key);
+    dr_app_stop();
+    return res;
+}
+
+__attribute__((noinline)) void btree_insert(btree_t *tree, int key, int val) {
+    dr_app_start();
+    internal_insert(tree, key, val);
+    dr_app_stop();
+}
+```
+
+Or via CLI symbol interception without editing source code:
+```bash
+./build/bin64/drrun -t drmemtrace \
+  -record_function "btree_search|1&btree_insert|2" \
+  -simulator_type cpu \
+  -cpu_config configs/o3_server.ini \
+  -- ./apps/BTree 100000 1000
+```
+
+---
+
+### Behavior with Child Functions & Libraries
+
+* **Dynamic Scope**: `dr_app_start()` and `dr_app_stop()` act like a stopwatch. **Any function called between start and stop (child functions, math libraries, `memcpy`, etc.) is fully traced down the entire call tree.**
+* **Pausing Simulation**: If you need to exclude an expensive debug print or disk write inside your ROI, you can pause simulation by nesting stop and start calls:
+  ```c
+  dr_app_start();
+  step_1();
+
+  // Temporarily pause simulation for non-critical logging:
+  dr_app_stop();
+  printf("Finished step 1\n");
+  dr_app_start();
+
+  step_2();
+  dr_app_stop();
+  ```
+
+---
+
+### ROI Options Comparison Table
+
+| Approach | Code Modification | Compilation / Linker Flags | `drrun` CLI Flags | Overhead Outside ROI |
+| :--- | :--- | :--- | :--- | :--- |
+| **`roi_begin()` / `roi_end()`** | Minimal (2 empty functions) | Standard `gcc` (none) | `-record_function "roi_begin\|0&roi_end\|0"` | Trace marker inserted |
+| **`dr_app_start()` / `dr_app_stop()`** | `#include "dr_api.h"` | `-I.../build/include -L.../build/lib64/release -ldynamorio` | None (standard `drrun` command) | **0%** (full native hardware speed) |
+| **Instruction Window** | **None** | Standard `gcc` (none) | `-trace_after_instrs <N> -trace_for_instrs <M>` | Minimal fast-forward |
+
