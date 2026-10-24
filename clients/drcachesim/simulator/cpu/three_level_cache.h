@@ -247,6 +247,12 @@ public:
     write_queue_t *get_l3_wq() const;
     prefetch_queue_t *get_l3_pq() const;
 
+    // Cache statistics accessors.
+    cache_stats_t *get_l1i_stats(unsigned int core) const { return l1i_stats_[core].get(); } // Return L1I stats pointer.
+    cache_stats_t *get_l1d_stats(unsigned int core) const { return l1d_stats_[core].get(); } // Return L1D stats pointer.
+    cache_stats_t *get_l2_stats(unsigned int core) const { return l2_stats_[core].get(); } // Return L2 stats pointer.
+    cache_stats_t *get_l3_stats() const { return l3_stats_.get(); } // Return shared L3/LLC stats pointer.
+
     /**
      * @brief Advances simulation time for all MSHRs across all levels, completing fills.
      *

@@ -285,6 +285,12 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         if (op_page_size.specified()) {
             knobs.page_size = op_page_size.get_value();
         }
+        if (op_heartbeat_interval.specified()) {
+            knobs.heartbeat_interval = op_heartbeat_interval.get_value(); // Override heartbeat interval.
+        }
+        if (op_stats_file.specified()) {
+            knobs.stats_file = op_stats_file.get_value(); // Override stats log filename.
+        }
         // Create and return the OoO CPU, MMU, and 3-level cache simulator tool instance.
         return cpu_simulator_create(knobs);
     } else if (tool == HISTOGRAM) {

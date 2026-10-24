@@ -183,9 +183,11 @@ public:
     reset();
 
     // Query methods.
-    size_t lq_size() const { return lq_entries_.size(); }
-    size_t sq_size() const { return sq_entries_.size(); }
-    int64_t store_forwardings() const { return store_forwardings_; }
+    size_t lq_size() const { return lq_entries_.size(); } // Current LQ occupancy.
+    size_t sq_size() const { return sq_entries_.size(); } // Current SQ occupancy.
+    int64_t total_loads_dispatched() const { return total_loads_dispatched_; } // Total dispatched loads.
+    int64_t total_stores_dispatched() const { return total_stores_dispatched_; } // Total dispatched stores.
+    int64_t store_forwardings() const { return store_forwardings_; } // Store to load forwardings.
 
 private:
     size_t lq_capacity_;                 // Maximum entries in the Load Queue.

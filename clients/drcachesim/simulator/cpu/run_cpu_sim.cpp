@@ -200,9 +200,14 @@ main(int argc, char **argv)
             max_instrs = std::strtoull(argv[++i], nullptr, 0);
         }
         // Check for progress heartbeat interval option.
-        else if (arg == "--print_interval" && i + 1 < argc) {
+        else if ((arg == "--print_interval" || arg == "--heartbeat_interval" || arg == "--heartbeat-interval") && i + 1 < argc) {
             // Parse unsigned long long integer for heartbeat interval.
-            print_interval = std::strtoull(argv[++i], nullptr, 0);
+            print_interval = std::strtoull(argv[++i], nullptr, 0); // Read interval.
+            knobs.heartbeat_interval = print_interval;             // Update knob.
+        }
+        // Check for stats log filename option.
+        else if ((arg == "--stats_file" || arg == "--stats-file") && i + 1 < argc) {
+            knobs.stats_file = argv[++i];                          // Store stats output filename.
         }
         // Check for number of cores option.
         else if (arg == "--cores" && i + 1 < argc) {

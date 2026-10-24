@@ -145,12 +145,14 @@ public:
     reset();
 
     // Query methods.
-    bool empty() const { return entries_.empty(); }
-    size_t size() const { return entries_.size(); }
-    size_t capacity() const { return capacity_; }
-    int64_t total_commits() const { return total_commits_; }
-    int64_t head_of_line_stalls() const { return head_of_line_stalls_; }
-    int64_t rob_full_stalls() const { return rob_full_stalls_; }
+    bool empty() const { return entries_.empty(); } // Returns whether ROB contains no entries.
+    size_t size() const { return entries_.size(); } // Returns current occupancy count.
+    size_t capacity() const { return capacity_; } // Returns maximum ROB capacity.
+    int64_t total_dispatches() const { return total_dispatches_; } // Total dispatched instructions.
+    int64_t total_commits() const { return total_commits_; } // Total committed instructions.
+    int64_t total_squashes() const { return total_squashes_; } // Total squashed instructions.
+    int64_t head_of_line_stalls() const { return head_of_line_stalls_; } // Head of line commit stalls.
+    int64_t rob_full_stalls() const { return rob_full_stalls_; } // Stalls due to full ROB.
 
 private:
     size_t capacity_;                 // Maximum entries allowed in the ROB.

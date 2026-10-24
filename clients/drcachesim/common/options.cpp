@@ -571,6 +571,16 @@ droption_t<std::string> op_cpu_config(
     "Path to INI configuration file for O3 CPU simulator",
     "Specifies an INI configuration file defining O3 microarchitectural parameters.");
 
+droption_t<uint64_t> op_heartbeat_interval(
+    DROPTION_SCOPE_FRONTEND, "heartbeat_interval", 10000000ULL, // Default 10M instructions.
+    "Instruction interval between progress heartbeats",         // Short description.
+    "Emits a progress heartbeat every N simulated instructions (default 10,000,000; 0 disables)."); // Long description.
+
+droption_t<std::string> op_stats_file(
+    DROPTION_SCOPE_FRONTEND, "stats_file", "stats.log",         // Default stats.log.
+    "Output file path for CSV simulation statistics",           // Short description.
+    "Specifies the destination file where final CSV simulation metrics will be written (default: stats.log)."); // Long.
+
 droption_t<std::string>
     op_tool(DROPTION_SCOPE_FRONTEND,
             std::vector<std::string>({ "tool", "simulator_type" }), CPU_CACHE,

@@ -165,6 +165,8 @@ extern dynamorio::droption::droption_t<double> op_TLB_cpi_base;
 extern dynamorio::droption::droption_t<unsigned int> op_TLB_l2_tlb_latency;
 extern dynamorio::droption::droption_t<unsigned int> op_TLB_dram_latency;
 extern dynamorio::droption::droption_t<std::string> op_cpu_config;
+extern dynamorio::droption::droption_t<uint64_t> op_heartbeat_interval; // Heartbeat interval in instructions.
+extern dynamorio::droption::droption_t<std::string> op_stats_file;      // CSV stats output log filename.
 extern dynamorio::droption::droption_t<std::string> op_tool;
 extern dynamorio::droption::droption_t<unsigned int> op_verbose;
 extern dynamorio::droption::droption_t<bool> op_show_func_trace;

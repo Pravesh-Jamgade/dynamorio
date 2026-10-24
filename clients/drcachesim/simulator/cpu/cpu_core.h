@@ -168,11 +168,15 @@ public:
     reset();
 
     // Query methods.
-    uint64_t get_current_cycle() const { return current_cycle_; }
-    int64_t total_instructions_retired() const { return total_instructions_retired_; }
-    int64_t icache_miss_stall_cycles() const { return icache_miss_stall_cycles_; }
-    double get_ipc() const;
-    double get_cpi() const;
+    uint64_t get_current_cycle() const { return current_cycle_; } // Return current simulation clock cycle.
+    int64_t total_instructions_retired() const { return total_instructions_retired_; } // Committed instructions.
+    int64_t total_instructions_fetched() const { return total_instructions_fetched_; } // Fetched instructions.
+    int64_t total_loads() const { return total_loads_; } // Total load operations.
+    int64_t total_stores() const { return total_stores_; } // Total store operations.
+    int64_t branch_squash_cycles() const { return branch_squash_cycles_; } // Penalty cycles from squashes.
+    int64_t icache_miss_stall_cycles() const { return icache_miss_stall_cycles_; } // L1I miss stall cycles.
+    double get_ipc() const; // Computed instructions per cycle.
+    double get_cpi() const; // Computed cycles per instruction.
 
     // Structure accessors.
     branch_predictor_t &get_branch_predictor() { return branch_predictor_; }

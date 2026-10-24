@@ -419,6 +419,13 @@ ini_config_t::apply_to_knobs(cpu_simulator_knobs_t &knobs) const
     std::string mem_sec = "memory";
     knobs.dram_latency = get_uint64(mem_sec, "dram_latency", knobs.dram_latency);
     knobs.line_size = get_bytesize(mem_sec, "line_size", knobs.line_size);
+
+    // [simulation] or [cpu] section parameters for heartbeat and stats file.
+    std::string sim_sec = has_section("simulation") ? "simulation" : (has_section("sim") ? "sim" : cpu_sec); // Section.
+    knobs.heartbeat_interval = get_uint64(sim_sec, "heartbeat_interval",
+                                          get_uint64(cpu_sec, "heartbeat_interval", knobs.heartbeat_interval)); // Interval.
+    knobs.stats_file = get_string(sim_sec, "stats_file",
+                                  get_string(cpu_sec, "stats_file", knobs.stats_file)); // Stats file.
 }
 
 void
