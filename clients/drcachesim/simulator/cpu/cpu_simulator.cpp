@@ -197,5 +197,13 @@ cpu_simulator_t::get_cache_hierarchy() const
     return cache_hierarchy_.get();
 }
 
+// Factory function creating an instance of the OoO CPU and 3-level cache simulator.
+analysis_tool_t *
+cpu_simulator_create(const cpu_simulator_knobs_t &knobs)
+{
+    // Allocate and return a new cpu_simulator_t analysis tool instance.
+    return new cpu_simulator_t(knobs);
+}
+
 } // namespace drmemtrace
 } // namespace dynamorio

@@ -42,6 +42,8 @@
 #define MISS_ANALYZER "miss_analyzer"
 #define TLB_LEGACY "TLB"
 #define TLB "TLB_simulator"
+#define CPU_SIMULATOR "cpu_simulator"
+#define CPU_SIMULATOR_ALT "cpu"
 #define HISTOGRAM "histogram"
 #define REUSE_DIST "reuse_distance"
 #define REUSE_TIME "reuse_time"

@@ -54,6 +54,7 @@
 #include "reader/ipc_reader.h"
 #include "simulator/cache_simulator_create.h"
 #include "simulator/tlb_simulator_create.h"
+#include "simulator/cpu/cpu_simulator_create.h"
 #include "tools/basic_counts_create.h"
 #include "tools/filter/record_filter_create.h"
 #include "tools/func_view_create.h"
@@ -233,6 +234,33 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         knobs.dram_latency = op_TLB_dram_latency.get_value();
         analysis_tool_t *tlb_simulator = tlb_simulator_create(knobs);
         return tlb_simulator;
+    } else if (tool == CPU_SIMULATOR || tool == CPU_SIMULATOR_ALT) {
+        // Instantiate configuration knobs for complete out-of-order CPU core simulation.
+        cpu_simulator_knobs_t knobs;
+        // Set number of CPU cores.
+        knobs.num_cores = op_num_cores.get_value();
+        // Set cache block line size in bytes.
+        knobs.line_size = op_line_size.get_value();
+        // Set private L1I size.
+        knobs.l1i_size = op_L1I_size.get_value();
+        // Set private L1I associativity.
+        knobs.l1i_assoc = op_L1I_assoc.get_value();
+        // Set private L1D size.
+        knobs.l1d_size = op_L1D_size.get_value();
+        // Set private L1D associativity.
+        knobs.l1d_assoc = op_L1D_assoc.get_value();
+        // Set private unified L2 size.
+        knobs.l2_size = op_LL_size.get_value();
+        // Set private unified L2 associativity.
+        knobs.l2_assoc = op_LL_assoc.get_value();
+        // Set Page Walk Cache entries per core.
+        knobs.pwc_entries = op_TLB_pwc_entries.get_value();
+        // Set Page Walk Cache associativity.
+        knobs.pwc_assoc = op_TLB_pwc_assoc.get_value();
+        // Set base page size.
+        knobs.page_size = op_page_size.get_value();
+        // Create and return the OoO CPU, MMU, and 3-level cache simulator tool instance.
+        return cpu_simulator_create(knobs);
     } else if (tool == HISTOGRAM) {
         return histogram_tool_create(op_line_size.get_value(), op_report_top.get_value(),
                                      op_verbose.get_value());

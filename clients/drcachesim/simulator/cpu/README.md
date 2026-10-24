@@ -118,72 +118,65 @@ clients/drcachesim/simulator/cpu/
 
 ---
 
-## 5. How to Run Complete Core Simulation
+## 5. Usage: Running Traces & Applications through the O3 Engine
 
-### 5.1 Using the Standalone Trace Runner (`bin/run_cpu_sim`)
+Our cycle-level Out-of-Order (O3) engine and unified 3-level cache simulator can be executed in three distinct ways:
 
-The fastest way to simulate Google datacenter traces and ChampSim traces directly is using the standalone `run_cpu_sim` driver:
+---
 
-#### Compile the Driver:
+### 5.1 Running Live Applications Online with DynamoRIO (`drrun`)
+
+**Does online application simulation require two steps?**
+**No. It is 100% automatic in a single command.**
+
+In online mode, DynamoRIO instruments the application in memory and streams instructions and memory references directly into our O3 CPU pipeline via shared-memory ring buffers. **Zero trace files are written to disk.**
+
+#### Basic Single-Step Invocation:
 ```bash
-mkdir -p bin
-g++ -std=c++14 -O2 -DX86_64 -DLINUX -DARC_64 \
-  -Iclients/drcachesim -Iclients/drcachesim/common -Iclients/drcachesim/reader \
-  -Iclients/drcachesim/simulator -Iclients/drcachesim/tests -Iext/droption \
-  clients/drcachesim/common/trace_entry.cpp \
-  clients/drcachesim/simulator/tlb.cpp \
-  clients/drcachesim/simulator/tlb_simulator.cpp \
-  clients/drcachesim/simulator/simulator.cpp \
-  clients/drcachesim/simulator/caching_device.cpp \
-  clients/drcachesim/simulator/caching_device_stats.cpp \
-  clients/drcachesim/simulator/cache.cpp \
-  clients/drcachesim/simulator/cache_lru.cpp \
-  clients/drcachesim/simulator/cache_fifo.cpp \
-  clients/drcachesim/simulator/cache_stats.cpp \
-  clients/drcachesim/simulator/prefetcher.cpp \
-  clients/drcachesim/simulator/snoop_filter.cpp \
-  clients/drcachesim/simulator/mmu/physical_frame_allocator.cpp \
-  clients/drcachesim/simulator/mmu/huge_page_detector.cpp \
-  clients/drcachesim/simulator/mmu/page_table.cpp \
-  clients/drcachesim/simulator/mmu/page_walk_cache.cpp \
-  clients/drcachesim/simulator/mmu/mmu_stats.cpp \
-  clients/drcachesim/simulator/mmu/page_table_walker.cpp \
-  clients/drcachesim/simulator/mmu/performance_model.cpp \
-  clients/drcachesim/simulator/cpu/three_level_cache.cpp \
-  clients/drcachesim/simulator/cpu/btb.cpp \
-  clients/drcachesim/simulator/cpu/reg_deps.cpp \
-  clients/drcachesim/simulator/cpu/rob.cpp \
-  clients/drcachesim/simulator/cpu/lsq.cpp \
-  clients/drcachesim/simulator/cpu/wrong_path.cpp \
-  clients/drcachesim/simulator/cpu/cpu_core.cpp \
-  clients/drcachesim/simulator/cpu/cpu_simulator.cpp \
-  clients/drcachesim/reader/v2p_reader.cpp \
-  clients/drcachesim/reader/champsim_reader.cpp \
-  clients/drcachesim/simulator/cpu/run_cpu_sim.cpp \
-  -o bin/run_cpu_sim
+# Run any Linux binary live through our Out-of-Order CPU simulator:
+bin64/drrun -t drmemtrace -simulator_type cpu -- /path/to/my_application [args...]
 ```
+*(Note: `-t drmemtrace` and `-t drcachesim` are identical aliases; both point to the same launcher).*
 
-#### Run a Standard ChampSim Trace (64-byte records):
+#### Customizing the O3 CPU Core & Cache Parameters for Live Apps:
+```bash
+bin64/drrun -t drmemtrace -simulator_type cpu \
+  -num_cores 1 \
+  -L1I_size 32K \
+  -L1D_size 32K \
+  -LL_size 256K \
+  -L3_size 8M \
+  -TLB_pwc_entries 32 \
+  -- /bin/ls -la
+```
+When the target application terminates, the O3 pipeline drains all pending stores to cache and prints full pipeline, ROB, LSQ, and cache statistics to `stdout`.
+
+---
+
+### 5.2 Running Saved Google Datacenter & ChampSim Traces (`bin/run_cpu_sim`)
+
+To simulate existing binary traces (`.trace`, `.gz`, `.xz`) directly without DynamoRIO runtime overhead, use the standalone driver [`bin/run_cpu_sim`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/run_cpu_sim.cpp):
+
+#### A. Running CloudSuite 96-Byte Traces (4 stores, 4 loads, ASID):
 ```bash
 ./bin/run_cpu_sim \
-  --trace /media/pravesh/Storage/ALL_TRACES/bc-0.trace.gz \
-  --format standard \
+  --trace /media/pravesh/Storage/ALL_TRACES/nutch_phase0_core1.trace.xz \
+  --format cloudsuite \
   --max_instrs 1000000 \
   --rob_size 256 \
   --lq_size 72 \
   --sq_size 56
 ```
 
-#### Run a CloudSuite Trace (96-byte records, 4 stores, ASID):
+#### B. Running Standard 64-Byte ChampSim Traces:
 ```bash
 ./bin/run_cpu_sim \
-  --trace /media/pravesh/Storage/ALL_TRACES/nutch_phase0_core1.trace.xz \
-  --format cloudsuite \
-  --max_instrs 1000000 \
-  --cores 1
+  --trace /media/pravesh/Storage/ALL_TRACES/bc-0.trace.gz \
+  --format standard \
+  --max_instrs 1000000
 ```
 
-#### Run with Automatic Trace Detection:
+#### C. Running Traces with Automatic Stride Detection:
 ```bash
 ./bin/run_cpu_sim \
   --trace /media/pravesh/Storage/ALL_TRACES/llama2.c-stories110M.1.champsimtrace.gz \
@@ -192,29 +185,28 @@ g++ -std=c++14 -O2 -DX86_64 -DLINUX -DARC_64 \
 
 ---
 
-### 5.2 Online Simulation on Live Applications (`drrun`)
+### 5.3 Optional Two-Step Offline Tracing & Replay
 
-To trace and simulate a live Linux binary online using DynamoRIO:
+If you want to record an execution trace once and replay it repeatedly across different microarchitectural configurations (e.g. comparing 128 vs 256 ROB entries or 32KB vs 64KB L1D):
 
 ```bash
-# 1. Collect offline trace of application with physical addresses:
-bin64/drrun -t drcachesim -offline -record_replace_retaddr -use_physical \
-  -outdir /tmp/my_trace -- ./my_application arg1 arg2
+# Step 1: Record offline compressed trace with physical address mappings
+bin64/drrun -t drmemtrace -offline -record_replace_retaddr -use_physical \
+  -outdir /tmp/my_app_trace -- ./my_application arg1 arg2
 
-# 2. Simulate complete OoO CPU core and memory hierarchy:
-bin64/drrun -t drcachesim \
-  -indir /tmp/my_trace/drmemtrace.my_application.*.dir \
-  -v2p_file /tmp/my_trace/drmemtrace.my_application.*.dir/v2p.log \
+# Step 2: Replay through our Out-of-Order CPU engine
+bin64/drrun -t drmemtrace -simulator_type cpu \
+  -indir /tmp/my_app_trace/drmemtrace.my_application.*.dir \
+  -v2p_file /tmp/my_app_trace/drmemtrace.my_application.*.dir/v2p.log \
   -TLB_enable_ptw true \
   -TLB_enable_huge_pages true \
   -TLB_pwc_entries 32 \
-  -TLB_couple_ptw_dcache true \
-  -TLB_enable_performance_model true
+  -TLB_couple_ptw_dcache true
 ```
 
 ---
 
-### 5.3 Programmatic C++ Simulation Driver
+### 5.4 Programmatic C++ Simulation Driver
 
 You can also embed the complete simulator in any C++ tool or benchmark suite:
 
