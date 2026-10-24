@@ -210,6 +210,7 @@ add_exported_library(drmemtrace_simulator STATIC
   simulator/mmu/page_walk_cache.cpp
   simulator/mmu/mmu_stats.cpp
   simulator/mmu/page_table_walker.cpp
+  simulator/mmu/performance_model.cpp
   )
 
 add_exported_library(drmemtrace_record_filter STATIC

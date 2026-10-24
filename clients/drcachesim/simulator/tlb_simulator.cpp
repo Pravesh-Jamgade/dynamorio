@@ -112,6 +112,15 @@ tlb_simulator_t::tlb_simulator_t(const tlb_simulator_knobs_t &knobs)
     // Resize per-core vectors for hardware page table walkers and coupled PTW caches.
     walkers_.resize(knobs_.num_cores);
     internal_ptw_dcaches_.resize(knobs_.num_cores);
+    // Initialize per-core instruction counters.
+    core_instructions_.resize(knobs_.num_cores, 0);
+
+    // Initialize the performance timing model with configured latencies and base CPI.
+    performance_params_t perf_params;
+    perf_params.cpi_base = knobs_.cpi_base;
+    perf_params.l2_tlb_hit_latency = knobs_.l2_tlb_hit_latency;
+    perf_params.dram_latency = knobs_.dram_latency;
+    perf_model_.set_params(perf_params);
 
     // Check whether warmup statistics tracking should be enabled on tlb_stats_t.
     bool warmup_enabled = (knobs_.warmup_refs > 0 || knobs_.warmup_fraction > 0.0);
@@ -284,6 +293,9 @@ tlb_simulator_t::reset_all_stats()
 {
     // Reset L1I, L1D, L2 TLB stats, MMU/PTW stats, and coupled cache stats on all cores.
     for (unsigned int i = 0; i < knobs_.num_cores; i++) {
+        if (i < core_instructions_.size()) {
+            core_instructions_[i] = 0;
+        }
         itlbs_[i]->get_stats()->reset();
         dtlbs_[i]->get_stats()->reset();
         lltlbs_[i]->get_stats()->reset();
@@ -358,6 +370,10 @@ tlb_simulator_t::process_memref(const memref_t &memref)
     if (type_is_instr(simref->instr.type)) {
         // Route instruction fetch to the core's private L1 instruction TLB.
         itlbs_[core_index]->request(*simref);
+        // Increment the core's retired instruction counter.
+        if (core_index >= 0 && static_cast<size_t>(core_index) < core_instructions_.size()) {
+            core_instructions_[core_index]++;
+        }
     } else if (simref->data.type == TRACE_TYPE_READ ||
                simref->data.type == TRACE_TYPE_WRITE) {
         // Route data load/store to the core's private L1 data TLB.
@@ -520,6 +536,40 @@ tlb_simulator_t::lookup_tlb_entry(unsigned int core, memref_pid_t pid, addr_t va
     return false;
 }
 
+performance_metrics_t
+tlb_simulator_t::get_core_performance_metrics(unsigned int core) const
+{
+    // Validate core index.
+    if (core >= knobs_.num_cores) {
+        return performance_metrics_t();
+    }
+    // Extract statistics pointers for L1I, L1D, and L2 TLBs.
+    const tlb_stats_t *l1i_stats = (itlbs_[core] != nullptr)
+        ? (const tlb_stats_t *)itlbs_[core]->get_stats() : nullptr;
+    const tlb_stats_t *l1d_stats = (dtlbs_[core] != nullptr)
+        ? (const tlb_stats_t *)dtlbs_[core]->get_stats() : nullptr;
+    const tlb_stats_t *l2_stats = (lltlbs_[core] != nullptr)
+        ? (const tlb_stats_t *)lltlbs_[core]->get_stats() : nullptr;
+
+    // Extract MMU walker stats for this core if present.
+    const mmu_stats_t *mmu_stats = (core < walkers_.size() && walkers_[core] != nullptr)
+        ? &walkers_[core]->get_stats() : nullptr;
+
+    // Check for internal coupled PTW data cache or external attached data cache.
+    const caching_device_stats_t *dcache_stats = nullptr;
+    if (core < internal_ptw_dcaches_.size() && internal_ptw_dcaches_[core] != nullptr) {
+        dcache_stats = internal_ptw_dcaches_[core]->get_stats();
+    } else if (core < walkers_.size() && walkers_[core] != nullptr &&
+               walkers_[core]->get_ptw_data_cache() != nullptr) {
+        dcache_stats = walkers_[core]->get_ptw_data_cache()->get_stats();
+    }
+
+    // Retrieve retired instruction count.
+    int64_t instrs = (core < core_instructions_.size()) ? core_instructions_[core] : 0;
+    // Evaluate and return the complete performance breakdown.
+    return perf_model_.evaluate(instrs, l1i_stats, l1d_stats, l2_stats, mmu_stats, dcache_stats);
+}
+
 bool
 tlb_simulator_t::print_results()
 {
@@ -545,6 +595,12 @@ tlb_simulator_t::print_results()
                 internal_ptw_dcaches_[i]->get_stats() != nullptr) {
                 std::cerr << "  Coupled PTW L1D Cache stats:" << std::endl;
                 internal_ptw_dcaches_[i]->get_stats()->print_stats("    ");
+            }
+            // Print microarchitectural performance timing model (cycles, CPI, IPC).
+            if (knobs_.enable_performance_model ||
+                (i < core_instructions_.size() && core_instructions_[i] > 0)) {
+                performance_metrics_t m = get_core_performance_metrics(i);
+                perf_model_.print_metrics(std::cerr, "  ", m);
             }
         }
     }

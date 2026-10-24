@@ -227,6 +227,10 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         knobs.ptw_dcache_line_size = op_line_size.get_value();
         knobs.ptw_dcache_size = op_L1D_size.get_value();
         knobs.ptw_dcache_assoc = op_L1D_assoc.get_value();
+        knobs.enable_performance_model = op_TLB_enable_performance_model.get_value();
+        knobs.cpi_base = op_TLB_cpi_base.get_value();
+        knobs.l2_tlb_hit_latency = op_TLB_l2_tlb_latency.get_value();
+        knobs.dram_latency = op_TLB_dram_latency.get_value();
         analysis_tool_t *tlb_simulator = tlb_simulator_create(knobs);
         return tlb_simulator;
     } else if (tool == HISTOGRAM) {

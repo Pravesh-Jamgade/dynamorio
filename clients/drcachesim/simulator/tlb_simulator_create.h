@@ -81,6 +81,10 @@ struct tlb_simulator_knobs_t {
         , ptw_dcache_line_size(64)        // Default 64-byte line size for coupled PTW dcache.
         , ptw_dcache_size(32 * 1024)      // Default 32 KB size for coupled PTW dcache.
         , ptw_dcache_assoc(8)             // Default 8-way associativity for coupled PTW dcache.
+        , enable_performance_model(false) // Whether to evaluate and print CPI/IPC metrics.
+        , cpi_base(0.5)                   // Default ideal superscalar CPI without stalls.
+        , l2_tlb_hit_latency(9)           // Latency in cycles to access unified L2 TLB.
+        , dram_latency(150)               // Latency in cycles to read from DRAM.
     {
     }
     unsigned int num_cores;             // Number of simulated processor cores.
@@ -108,6 +112,10 @@ struct tlb_simulator_knobs_t {
     unsigned int ptw_dcache_line_size;  // Line size of internal coupled PTW data cache.
     uint64_t ptw_dcache_size;           // Total byte size of internal coupled PTW dcache.
     unsigned int ptw_dcache_assoc;      // Associativity of internal coupled PTW dcache.
+    bool enable_performance_model;      // Whether to evaluate and print CPI/IPC metrics.
+    double cpi_base;                    // Ideal base CPI without stalls.
+    uint64_t l2_tlb_hit_latency;        // Latency in cycles to access unified L2 TLB.
+    uint64_t dram_latency;              // Latency in cycles to read from DRAM.
 };
 
 /** Creates an instance of a TLB simulator. */

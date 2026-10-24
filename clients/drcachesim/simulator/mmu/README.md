@@ -103,6 +103,21 @@ Coordinates the hardware page table walk on an L2 TLB miss:
    - Inserts intermediate directory entries into `page_walk_cache_t`.
 5. Accumulates detailed metrics in `mmu_stats_t`.
 
+### 3.7 `performance_model_t` (Microarchitectural Cycles, CPI, and IPC)
+Synthesizes processor retirement, data cache stall cycles, and TLB / Page Table Walk stall cycles:
+- **`total_instructions`**: Instruction fetch events ($N_{\text{instr}} = \text{L1I}_{\text{hits}} + \text{L1I}_{\text{misses}}$).
+- **`CPI_cache_stalls`**: Cache stall cycles per instruction:
+  $$\text{CPI}_{\text{cache\_stalls}} = \frac{M_{\text{dcache}} \times L_{\text{dram}}}{N_{\text{instr}}}$$
+- **`CPI_tlb_stalls`**: Total TLB lookup and page table walk stall cycles per instruction:
+  $$\text{Stall}_{\text{L1\_TLB}} = (M_{\text{L1I\_TLB}} + M_{\text{L1D\_TLB}}) \times L_{\text{L2\_TLB\_hit}}$$
+  $$\text{Stall}_{\text{PTW}} = (N_{\text{PWC\_hits}} \times L_{\text{PWC}}) + (N_{\text{PTW\_cache\_hits}} \times L_{\text{dcache\_hit}}) + (N_{\text{PTW\_cache\_misses}} \times L_{\text{dram}})$$
+  $$\text{CPI}_{\text{tlb\_stalls}} = \frac{\text{Stall}_{\text{L1\_TLB}} + \text{Stall}_{\text{PTW}}}{N_{\text{instr}}}$$
+- **`total_cycles`**: Base execution cycles + cache stall cycles + TLB stall cycles:
+  $$\text{Total Cycles} = \text{round}(N_{\text{instr}} \times \text{CPI}_{\text{base}}) + \text{Cache Stall Cycles} + \text{TLB Stall Cycles}$$
+- **`Total CPI` & `IPC`**:
+  $$\text{CPI}_{\text{total}} = \text{CPI}_{\text{base}} + \text{CPI}_{\text{cache\_stalls}} + \text{CPI}_{\text{tlb\_stalls}}$$
+  $$\text{IPC} = \frac{N_{\text{instr}}}{\text{Total Cycles}} = \frac{1}{\text{CPI}_{\text{total}}}$$
+
 ---
 
 ## 4. Command-Line Usage & Programmatic Configuration
@@ -120,6 +135,10 @@ Coordinates the hardware page table walk on an L2 TLB miss:
 | `-TLB_ptw_dcache_size` | `32768` | Coupled PTW L1 data cache size in bytes (`32KB`). |
 | `-TLB_ptw_dcache_assoc` | `8` | Coupled PTW L1 data cache associativity (`8`-way). |
 | `-TLB_ptw_dcache_line_size` | `64` | Coupled PTW L1 data cache line size in bytes (`64B`). |
+| `-TLB_enable_performance_model` | `false` | Calculate and print total instructions, cycles, `CPI_cache_stalls`, `CPI_tlb_stalls`, and `IPC`. |
+| `-TLB_cpi_base` | `0.5` | Ideal base CPI without stalls (default 0.5 for 2-wide retirement). |
+| `-TLB_l2_tlb_latency` | `9` | Latency in cycles to access unified L2 TLB on an L1 TLB miss. |
+| `-TLB_dram_latency` | `150` | Latency in processor cycles for an uncached main memory DRAM read. |
 
 Example command:
 ```bash

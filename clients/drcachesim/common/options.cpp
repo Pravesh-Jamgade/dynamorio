@@ -540,6 +540,32 @@ droption_t<bool> op_TLB_couple_ptw_dcache(
     "physical TRACE_TYPE_READ for the page table entry into a coupled per-core data "
     "cache configured by -line_size, -L1D_size, and -L1D_assoc.");
 
+// Option enabling the microarchitectural performance and CPI/IPC timing model.
+droption_t<bool> op_TLB_enable_performance_model(
+    DROPTION_SCOPE_FRONTEND, "TLB_enable_performance_model", false,
+    "Enable microarchitectural CPI, IPC, and cycle timing model output",
+    "When enabled, calculates and prints total instructions, total execution cycles, "
+    "base CPI, cache stall CPI, TLB stall CPI, total CPI, and IPC.");
+
+// Option specifying the ideal base CPI without stalls.
+droption_t<double> op_TLB_cpi_base(
+    DROPTION_SCOPE_FRONTEND, "TLB_cpi_base", 0.5,
+    "Ideal base CPI without memory stalls",
+    "Specifies the ideal execution cycles per instruction (CPI) without memory stalls "
+    "(default is 0.5, representing a 2-wide retirement baseline).");
+
+// Option specifying the L2 TLB hit latency in cycles.
+droption_t<unsigned int> op_TLB_l2_tlb_latency(
+    DROPTION_SCOPE_FRONTEND, "TLB_l2_tlb_latency", 9,
+    "Latency in cycles to access unified L2 TLB on L1 miss",
+    "Specifies the latency in processor clock cycles to hit in the unified L2 TLB.");
+
+// Option specifying the DRAM access latency in cycles.
+droption_t<unsigned int> op_TLB_dram_latency(
+    DROPTION_SCOPE_FRONTEND, "TLB_dram_latency", 150,
+    "Latency in cycles for main memory DRAM access",
+    "Specifies the latency in processor clock cycles for an uncached memory or PTE read.");
+
 droption_t<std::string>
     op_tool(DROPTION_SCOPE_FRONTEND,
             std::vector<std::string>({ "tool", "simulator_type" }), CPU_CACHE,

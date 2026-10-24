@@ -49,6 +49,7 @@
 #include "mmu/mmu_types.h"           // Provide page_size_kind_t and ptw_result_t.
 #include "mmu/page_table.h"          // Provide mmu_address_space_manager_t.
 #include "mmu/page_table_walker.h"   // Provide page_table_walker_t.
+#include "mmu/performance_model.h"   // Provide performance_model_t and metrics.
 #include "simulator.h"               // Provide base simulator_t class.
 #include "tlb.h"                     // Provide tlb_t, tlb_lru_t, and tlb_fifo_t.
 #include "tlb_simulator_create.h"    // Provide tlb_simulator_knobs_t.
@@ -151,6 +152,12 @@ public:
                      addr_t *ppn_out = nullptr,
                      page_size_kind_t *kind_out = nullptr) const;
 
+    /**
+     * @brief Computes microarchitectural timing and CPI/IPC performance metrics for `core`.
+     */
+    performance_metrics_t
+    get_core_performance_metrics(unsigned int core) const;
+
 protected:
     // Factory method that creates a tlb_t subclass for the given replacement policy.
     virtual tlb_t *
@@ -178,6 +185,10 @@ protected:
     std::vector<std::unique_ptr<page_table_walker_t>> walkers_;
     // Optional internal per-core L1D data caches for coupled PTW memory reads.
     std::vector<std::unique_ptr<cache_t>> internal_ptw_dcaches_;
+    // Microarchitectural performance timing model (calculates cycles, CPI, and IPC).
+    performance_model_t perf_model_;
+    // Per-core instruction count executed.
+    std::vector<int64_t> core_instructions_;
     // Tracks whether warmup has completed when warmup_refs or warmup_fraction is used.
     bool is_warmed_up_;
 };

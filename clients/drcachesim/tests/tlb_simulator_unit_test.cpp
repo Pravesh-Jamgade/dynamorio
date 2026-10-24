@@ -542,6 +542,118 @@ unit_test_replacement_policies_and_shootdowns()
     }
 }
 
+// Test 6: Performance Model, Total Instructions, Total Cycles, CPI Stalls, and IPC.
+static void
+unit_test_performance_model_cpi_ipc()
+{
+    // 1. Direct mathematical verification of performance_model_t.
+    performance_params_t params;
+    params.cpi_base = 0.5;
+    params.l2_tlb_hit_latency = 10;
+    params.pwc_hit_latency = 4;
+    params.dram_latency = 100;
+    params.dcache_hit_latency = 4;
+    params.dcache_miss_latency = 100;
+
+    performance_model_t model(params);
+
+    // Mock stats:
+    // L1 TLB with 50 misses.
+    tlb_stats_t mock_l1_stats(4096);
+    memref_t dummy_ref = {};
+    dummy_ref.data.type = TRACE_TYPE_READ;
+    dummy_ref.data.size = 8;
+    for (int i = 0; i < 50; ++i) {
+        mock_l1_stats.access(dummy_ref, /*hit=*/false, nullptr);
+    }
+    // Coupled data cache with 5 misses.
+    cache_stats_t mock_dcache_stats(64);
+    for (int i = 0; i < 5; ++i) {
+        mock_dcache_stats.access(dummy_ref, /*hit=*/false, nullptr);
+    }
+
+    // MMU stats with 1 walk of 4 levels, 0 PWC hits, 4 memory reads to DRAM.
+    mmu_stats_t mock_mmu_stats;
+    ptw_result_t mock_ptw;
+    mock_ptw.success = true;
+    mock_ptw.page_size_kind = page_size_kind_t::PAGE_SIZE_4KB;
+    mock_ptw.is_page_fault = true;
+    mock_ptw.num_memory_reads = 4;
+    for (int lvl = 4; lvl >= 1; --lvl) {
+        ptw_step_record_t step;
+        step.level = static_cast<ptw_level_t>(lvl);
+        step.pwc_hit = false;
+        mock_ptw.steps.push_back(step);
+    }
+    mock_mmu_stats.record_walk(mock_ptw);
+
+    // Evaluate 1000 instructions.
+    const int64_t instrs = 1000;
+    performance_metrics_t m =
+        model.evaluate(instrs, &mock_l1_stats, nullptr, nullptr,
+                       &mock_mmu_stats, &mock_dcache_stats);
+
+    // Assert exact values:
+    // Base cycles = round(1000 * 0.5) = 500.
+    assert(m.total_instructions == 1000);
+    assert(m.base_cycles == 500);
+    // Cache stall cycles = 5 misses * 100 = 500.
+    assert(m.cache_stall_cycles == 500);
+    // TLB stall cycles = (50 L1 misses * 10) + (4 PTW reads * 100) = 500 + 400 = 900.
+    assert(m.tlb_stall_cycles == 900);
+    // Total cycles = 500 + 500 + 900 = 1900.
+    assert(m.total_cycles == 1900);
+    // CPI base = 0.5.
+    assert(m.cpi_base == 0.5);
+    // CPI cache stalls = 500 / 1000 = 0.5.
+    assert(std::abs(m.cpi_cache_stalls - 0.5) < 1e-6);
+    // CPI TLB stalls = 900 / 1000 = 0.9.
+    assert(std::abs(m.cpi_tlb_stalls - 0.9) < 1e-6);
+    // Total CPI = 0.5 + 0.5 + 0.9 = 1.9.
+    assert(std::abs(m.cpi_total - 1.9) < 1e-6);
+    // IPC = 1000 / 1900 = 0.5263157...
+    assert(std::abs(m.ipc - (1000.0 / 1900.0)) < 1e-6);
+
+    // 2. End-to-end integration test with tlb_simulator_t.
+    tlb_simulator_knobs_t knobs;
+    knobs.num_cores = 1;
+    knobs.page_size = 4096;
+    knobs.enable_page_table_walk = true;
+    knobs.enable_performance_model = true;
+    knobs.cpi_base = 0.5;
+    knobs.l2_tlb_hit_latency = 9;
+    knobs.dram_latency = 150;
+
+    tlb_simulator_t sim(knobs);
+    const memref_pid_t pid = 8888;
+
+    // Issue 20 instruction fetch memrefs and 10 data read memrefs.
+    for (int i = 0; i < 20; ++i) {
+        addr_t pc = 0x400000ULL + static_cast<addr_t>(i) * 4ULL;
+        assert(sim.process_memref(generate_mem_ref(pc, pc, pid, 1, TRACE_TYPE_INSTR)));
+    }
+    for (int i = 0; i < 10; ++i) {
+        addr_t addr = 0x7fff00000000ULL + static_cast<addr_t>(i) * 4096ULL;
+        assert(sim.process_memref(generate_mem_ref(addr, 0x400010, pid, 1, TRACE_TYPE_READ)));
+    }
+
+    // Query core 0's computed performance metrics.
+    performance_metrics_t core_m = sim.get_core_performance_metrics(0);
+    // Exactly 20 instructions must be recorded.
+    assert(core_m.total_instructions == 20);
+    // Total cycles must be strictly greater than ideal base cycles (20 * 0.5 = 10).
+    assert(core_m.total_cycles > 10);
+    // TLB stall cycles must be positive due to cold L1/L2 misses and page table walks.
+    assert(core_m.tlb_stall_cycles > 0);
+    // Total CPI must be strictly greater than cpi_base.
+    assert(core_m.cpi_total > knobs.cpi_base);
+    // IPC must equal total_instructions / total_cycles.
+    assert(std::abs(core_m.ipc - (20.0 / static_cast<double>(core_m.total_cycles))) < 1e-6);
+
+    // Verify print_results prints the performance & timing model cleanly.
+    assert(sim.print_results());
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -558,6 +670,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_coupled_ptw_data_cache();
     // Run replacement policies (LFU, LRU, FIFO) and TLB shootdown unit test.
     unit_test_replacement_policies_and_shootdowns();
+    // Run performance model (instructions, cycles, CPI_cache_stalls, CPI_tlb_stalls, IPC) unit test.
+    unit_test_performance_model_cpi_ipc();
 }
 
 } // namespace drmemtrace
