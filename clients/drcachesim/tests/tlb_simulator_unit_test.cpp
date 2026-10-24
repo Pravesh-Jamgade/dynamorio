@@ -492,6 +492,17 @@ unit_test_coupled_ptw_data_cache()
     assert(stats != nullptr);
     assert(stats->get_ptw_cache_misses() == 4);
     assert(stats->get_ptw_cache_hits() == 0);
+    // Verify per-level cache hit breakdown for cold walk: all 4 levels went to DRAM.
+    assert(stats->get_ptw_cache_hits_dram() == 4); // DRAM serviced all 4 cold PTE reads.
+    assert(stats->get_ptw_cache_hits_l1d() == 0);  // No L1D hits during initial cold walk.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_4_PML4E,
+                                       ptw_cache_hit_level_t::HIT_DRAM) == 1); // L4 missed to DRAM.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_3_PDPTE,
+                                       ptw_cache_hit_level_t::HIT_DRAM) == 1); // L3 missed to DRAM.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_2_PDE,
+                                       ptw_cache_hit_level_t::HIT_DRAM) == 1); // L2 missed to DRAM.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_1_PTE,
+                                       ptw_cache_hit_level_t::HIT_DRAM) == 1); // L1 missed to DRAM.
 
     // Second walk on adjacent 4KB page vaddr2 = 0x00007fff10001000:
     // Because PWC is disabled, the PTW again reads PML4E, PDPTE, PDE, and PTE from the
@@ -505,6 +516,17 @@ unit_test_coupled_ptw_data_cache()
 
     assert(stats->get_ptw_cache_misses() == 4);
     assert(stats->get_ptw_cache_hits() == 4);
+    // Verify per-level cache hit breakdown for warm walk: all 4 levels hit in L1D cache.
+    assert(stats->get_ptw_cache_hits_l1d() == 4);  // 4 total L1D hits after warm walk.
+    assert(stats->get_ptw_cache_hits_dram() == 4); // Still 4 DRAM accesses total.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_4_PML4E,
+                                       ptw_cache_hit_level_t::HIT_L1D) == 1);  // L4 hit in L1D.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_3_PDPTE,
+                                       ptw_cache_hit_level_t::HIT_L1D) == 1);  // L3 hit in L1D.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_2_PDE,
+                                       ptw_cache_hit_level_t::HIT_L1D) == 1);  // L2 hit in L1D.
+    assert(stats->get_level_cache_hits(ptw_level_t::PTW_LEVEL_1_PTE,
+                                       ptw_cache_hit_level_t::HIT_L1D) == 1);  // L1 hit in L1D.
 }
 
 // Test 5: TLB Replacement Policies (LRU, LFU, FIFO) and Cross-Core TLB Shootdowns.

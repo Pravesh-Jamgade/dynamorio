@@ -89,6 +89,16 @@ public:
     record_ptw_cache_access(bool cache_hit);
 
     /**
+     * @brief Records the cache hierarchy hit location for an 8-byte PTE memory read
+     *        at a specific page table walk radix level.
+     *
+     * @param ptw_level       The radix level (L4 PML4E down to L1 PTE).
+     * @param cache_hit_level The cache hierarchy level (L1D, L2, L3, or DRAM).
+     */
+    void
+    record_ptw_cache_access(ptw_level_t ptw_level, ptw_cache_hit_level_t cache_hit_level);
+
+    /**
      * @brief Records a TLB shootdown / invalidation event.
      */
     void
@@ -190,6 +200,46 @@ public:
         return ptw_cache_misses_; // Return coupled data cache misses for PTE reads.
     }
 
+    // Returns the count of PTE reads satisfied at `cache_level` for radix `level`.
+    int64_t
+    get_level_cache_hits(ptw_level_t level, ptw_cache_hit_level_t cache_level) const
+    {
+        int lvl_idx = static_cast<int>(level); // Convert radix level enum to index.
+        int hit_idx = static_cast<int>(cache_level); // Convert cache hit level to index.
+        if (lvl_idx < 1 || lvl_idx > 4 || hit_idx < 0 || hit_idx > 3) { // Bounds check.
+            return 0; // Return zero on invalid range.
+        }
+        return ptw_level_cache_hits_[lvl_idx][hit_idx]; // Return hit count.
+    }
+
+    // Returns total PTE reads satisfied in L1 data cache.
+    int64_t
+    get_ptw_cache_hits_l1d() const
+    {
+        return ptw_cache_hits_l1d_; // Return L1D hits.
+    }
+
+    // Returns total PTE reads satisfied in L2 cache.
+    int64_t
+    get_ptw_cache_hits_l2() const
+    {
+        return ptw_cache_hits_l2_; // Return L2 hits.
+    }
+
+    // Returns total PTE reads satisfied in L3 cache.
+    int64_t
+    get_ptw_cache_hits_l3() const
+    {
+        return ptw_cache_hits_l3_; // Return L3 hits.
+    }
+
+    // Returns total PTE reads satisfied in DRAM.
+    int64_t
+    get_ptw_cache_hits_dram() const
+    {
+        return ptw_cache_hits_dram_; // Return DRAM accesses.
+    }
+
     int64_t
     get_tlb_shootdowns() const
     {
@@ -210,6 +260,12 @@ private:
     std::array<int64_t, 5> pwc_misses_per_level_; // PWC misses indexed by level [1..4].
     int64_t ptw_cache_hits_;                    // Coupled data cache hits on PTE reads.
     int64_t ptw_cache_misses_;                  // Coupled data cache misses on PTE reads.
+    std::array<std::array<int64_t, 4>, 5>
+        ptw_level_cache_hits_;                  // Per-level cache hits [level 1..4][cache_level 0..3].
+    int64_t ptw_cache_hits_l1d_;                // Total PTE reads satisfied in L1D cache.
+    int64_t ptw_cache_hits_l2_;                 // Total PTE reads satisfied in L2 cache.
+    int64_t ptw_cache_hits_l3_;                 // Total PTE reads satisfied in L3 cache.
+    int64_t ptw_cache_hits_dram_;               // Total PTE reads satisfied in DRAM.
     int64_t tlb_shootdowns_;                    // Total TLB shootdowns processed.
 };
 

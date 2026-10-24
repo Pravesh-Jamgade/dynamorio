@@ -68,6 +68,15 @@ mmu_stats_t::reset()
     // Reset coupled PTW data cache counters.
     ptw_cache_hits_ = 0;
     ptw_cache_misses_ = 0;
+    // Zero per-level cache hits matrix [level 1..4][cache_level 0..3].
+    for (auto &arr : ptw_level_cache_hits_) {
+        arr.fill(0); // Zero each row.
+    }
+    // Zero aggregate per-cache-level hit counters.
+    ptw_cache_hits_l1d_ = 0;   // Reset L1D hit counter.
+    ptw_cache_hits_l2_ = 0;    // Reset L2 hit counter.
+    ptw_cache_hits_l3_ = 0;    // Reset L3 hit counter.
+    ptw_cache_hits_dram_ = 0;  // Reset DRAM counter.
     // Reset TLB shootdown counter.
     tlb_shootdowns_ = 0;
 }
@@ -137,6 +146,39 @@ mmu_stats_t::record_ptw_cache_access(bool cache_hit)
 }
 
 void
+mmu_stats_t::record_ptw_cache_access(ptw_level_t ptw_level,
+                                     ptw_cache_hit_level_t cache_hit_level)
+{
+    // Convert radix level enum to an integer array index [1..4].
+    int lvl_idx = static_cast<int>(ptw_level);
+    // Convert cache hit level enum to an integer array index [0..3].
+    int hit_idx = static_cast<int>(cache_hit_level);
+    // Record into per-level cache hits matrix if indices are within bounds.
+    if (lvl_idx >= 1 && lvl_idx <= 4 && hit_idx >= 0 && hit_idx <= 3) {
+        ++ptw_level_cache_hits_[lvl_idx][hit_idx]; // Increment specific cell.
+    }
+    // Update aggregate per-cache-level and legacy hit/miss counters.
+    switch (cache_hit_level) {
+    case ptw_cache_hit_level_t::HIT_L1D: // Hit in L1 Data Cache.
+        ++ptw_cache_hits_l1d_;           // Increment L1D aggregate hits.
+        ++ptw_cache_hits_;               // Increment legacy cache hit counter.
+        break;                           // Break out of switch.
+    case ptw_cache_hit_level_t::HIT_L2:  // Hit in L2 Unified Cache.
+        ++ptw_cache_hits_l2_;            // Increment L2 aggregate hits.
+        ++ptw_cache_misses_;             // Missed L1D from CPU core's perspective.
+        break;                           // Break out of switch.
+    case ptw_cache_hit_level_t::HIT_L3:  // Hit in L3 / LLC Cache.
+        ++ptw_cache_hits_l3_;            // Increment L3 aggregate hits.
+        ++ptw_cache_misses_;             // Missed L1D from CPU core's perspective.
+        break;                           // Break out of switch.
+    case ptw_cache_hit_level_t::HIT_DRAM: // Missed all caches; serviced by DRAM.
+        ++ptw_cache_hits_dram_;           // Increment DRAM aggregate accesses.
+        ++ptw_cache_misses_;              // Missed L1D from CPU core's perspective.
+        break;                            // Break out of switch.
+    }
+}
+
+void
 mmu_stats_t::print_stats(const std::string &prefix) const
 {
     // Format numbers with locale thousands separators to match caching_device_stats_t.
@@ -157,11 +199,42 @@ mmu_stats_t::print_stats(const std::string &prefix) const
               << std::setw(16) << std::right << total_pwc_hits_ << std::endl;
     std::cerr << prefix << std::setw(22) << std::left << "PWC misses:"
               << std::setw(16) << std::right << total_pwc_misses_ << std::endl;
-    if (ptw_cache_hits_ + ptw_cache_misses_ > 0) {
+    if (ptw_cache_hits_ + ptw_cache_misses_ > 0 ||
+        ptw_cache_hits_l1d_ + ptw_cache_hits_l2_ + ptw_cache_hits_l3_ +
+            ptw_cache_hits_dram_ > 0) {
         std::cerr << prefix << std::setw(22) << std::left << "PTW cache hits:"
                   << std::setw(16) << std::right << ptw_cache_hits_ << std::endl;
         std::cerr << prefix << std::setw(22) << std::left << "PTW cache misses:"
                   << std::setw(16) << std::right << ptw_cache_misses_ << std::endl;
+        std::cerr << prefix << "PTW cache hits by walk level:" << std::endl;
+        // Descriptor table mapping radix levels to display labels.
+        const struct {
+            ptw_level_t level; // Radix walk level.
+            const char *name;  // Formatted level name string.
+        } levels[] = {
+            { ptw_level_t::PTW_LEVEL_4_PML4E, "  L4 (PML4E):" }, // Level 4 descriptor.
+            { ptw_level_t::PTW_LEVEL_3_PDPTE, "  L3 (PDPTE):" }, // Level 3 descriptor.
+            { ptw_level_t::PTW_LEVEL_2_PDE,   "  L2 (PDE):  " }, // Level 2 descriptor.
+            { ptw_level_t::PTW_LEVEL_1_PTE,   "  L1 (PTE):  " }, // Level 1 descriptor.
+        };
+        // Print the hit breakdown across L1D, L2, L3, and DRAM for each walk level.
+        for (const auto &item : levels) {
+            int lvl_idx = static_cast<int>(item.level); // Extract level index.
+            int64_t l1d = ptw_level_cache_hits_[lvl_idx]
+                [static_cast<int>(ptw_cache_hit_level_t::HIT_L1D)]; // L1D hits.
+            int64_t l2 = ptw_level_cache_hits_[lvl_idx]
+                [static_cast<int>(ptw_cache_hit_level_t::HIT_L2)];  // L2 hits.
+            int64_t l3 = ptw_level_cache_hits_[lvl_idx]
+                [static_cast<int>(ptw_cache_hit_level_t::HIT_L3)];  // L3 hits.
+            int64_t dram = ptw_level_cache_hits_[lvl_idx]
+                [static_cast<int>(ptw_cache_hit_level_t::HIT_DRAM)]; // DRAM accesses.
+            std::cerr << prefix << item.name << " "
+                      << "L1D=" << std::setw(8) << std::right << l1d << "  "
+                      << "L2="  << std::setw(8) << std::right << l2  << "  "
+                      << "L3="  << std::setw(8) << std::right << l3  << "  "
+                      << "DRAM=" << std::setw(8) << std::right << dram
+                      << std::endl; // Output formatted line.
+        }
     }
     if (tlb_shootdowns_ > 0) {
         std::cerr << prefix << std::setw(22) << std::left << "TLB shootdowns:"

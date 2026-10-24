@@ -167,9 +167,11 @@ public:
     }
 
 private:
-    // Issues an 8-byte physical memory read for a PTE into `ptw_data_cache_` if attached.
-    void
-    issue_pte_cache_read(const memref_t &origin_memref, addr_t pte_phys_addr);
+    // Issues an 8-byte physical memory read for a PTE into `ptw_data_cache_` if attached
+    // and returns the hierarchy level where the read was satisfied (L1D, L2, L3, DRAM).
+    ptw_cache_hit_level_t
+    issue_pte_cache_read(const memref_t &origin_memref, addr_t pte_phys_addr,
+                         ptw_level_t ptw_level);
 
     int core_id_;                                   // Simulated CPU core index.
     mmu_address_space_manager_t *address_space_mgr_; // Shared radix page table manager.

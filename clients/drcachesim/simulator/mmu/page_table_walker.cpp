@@ -57,37 +57,72 @@ page_table_walker_t::page_table_walker_t(int core_id,
 {
 }
 
-void
+ptw_cache_hit_level_t
 page_table_walker_t::issue_pte_cache_read(const memref_t &origin_memref,
-                                          addr_t pte_phys_addr)
+                                          addr_t pte_phys_addr,
+                                          ptw_level_t ptw_level)
 {
-    // If no coupled CPU data cache is attached, do nothing.
+    // If no coupled CPU data cache is attached, record as DRAM and return.
     if (ptw_data_cache_ == nullptr) {
-        return;
+        stats_.record_ptw_cache_access(ptw_level, ptw_cache_hit_level_t::HIT_DRAM); // Record DRAM read.
+        return ptw_cache_hit_level_t::HIT_DRAM; // Return DRAM hit level.
     }
-    // Snapshot the data cache's hit counter prior to issuing the 8-byte PTE read.
-    int64_t hits_before = 0;
-    caching_device_stats_t *cache_stats = ptw_data_cache_->get_stats();
-    if (cache_stats != nullptr) {
-        hits_before = cache_stats->get_metric(metric_name_t::HITS);
+    // Traverse the cache hierarchy upward starting from the coupled L1D cache.
+    caching_device_t *c1 = ptw_data_cache_;                             // L1 Data cache.
+    caching_device_t *c2 = (c1 != nullptr) ? c1->get_parent() : nullptr; // L2 Unified cache.
+    caching_device_t *c3 = (c2 != nullptr) ? c2->get_parent() : nullptr; // L3 Shared cache.
+    // Snapshot the cache hit counters prior to issuing the 8-byte PTE read.
+    int64_t c1_hits_before = 0; // Prior L1D hit count.
+    int64_t c2_hits_before = 0; // Prior L2 hit count.
+    int64_t c3_hits_before = 0; // Prior L3 hit count.
+    if (c1 != nullptr && c1->get_stats() != nullptr) {
+        c1_hits_before = c1->get_stats()->get_metric(metric_name_t::HITS); // Read L1D hits.
+    }
+    if (c2 != nullptr && c2->get_stats() != nullptr) {
+        c2_hits_before = c2->get_stats()->get_metric(metric_name_t::HITS); // Read L2 hits.
+    }
+    if (c3 != nullptr && c3->get_stats() != nullptr) {
+        c3_hits_before = c3->get_stats()->get_metric(metric_name_t::HITS); // Read L3 hits.
     }
     // Construct a synthetic 8-byte physical TRACE_TYPE_READ for the hardware PTE.
-    memref_t pte_memref = {};
-    pte_memref.data.type = TRACE_TYPE_READ;
-    pte_memref.data.pid = origin_memref.data.pid;
-    pte_memref.data.tid = origin_memref.data.tid;
-    pte_memref.data.addr = pte_phys_addr;
-    pte_memref.data.size = mmu_constants_t::PTE_SIZE_BYTES;
+    memref_t pte_memref = {};                           // Zero-initialize memref struct.
+    pte_memref.data.type = TRACE_TYPE_READ;             // Set read type for PTE lookup.
+    pte_memref.data.pid = origin_memref.data.pid;       // Propagate process identifier.
+    pte_memref.data.tid = origin_memref.data.tid;       // Propagate thread identifier.
+    pte_memref.data.addr = pte_phys_addr;               // Set target 8-byte physical address.
+    pte_memref.data.size = mmu_constants_t::PTE_SIZE_BYTES; // Size is 8 bytes (64 bits).
     pte_memref.data.pc =
         type_is_instr(origin_memref.instr.type) ? origin_memref.instr.addr
-                                                : origin_memref.data.pc;
+                                                : origin_memref.data.pc; // Source PC.
     // Dispatch the 8-byte physical PTE read into the coupled data cache hierarchy.
     ptw_data_cache_->request(pte_memref);
-    // Check whether the PTE read hit or missed in the coupled data cache.
-    if (cache_stats != nullptr) {
-        int64_t hits_after = cache_stats->get_metric(metric_name_t::HITS);
-        stats_.record_ptw_cache_access(hits_after > hits_before);
+    // Snapshot hit counters after issuing the PTE read.
+    int64_t c1_hits_after = 0; // Post L1D hit count.
+    int64_t c2_hits_after = 0; // Post L2 hit count.
+    int64_t c3_hits_after = 0; // Post L3 hit count.
+    if (c1 != nullptr && c1->get_stats() != nullptr) {
+        c1_hits_after = c1->get_stats()->get_metric(metric_name_t::HITS); // Read L1D hits.
     }
+    if (c2 != nullptr && c2->get_stats() != nullptr) {
+        c2_hits_after = c2->get_stats()->get_metric(metric_name_t::HITS); // Read L2 hits.
+    }
+    if (c3 != nullptr && c3->get_stats() != nullptr) {
+        c3_hits_after = c3->get_stats()->get_metric(metric_name_t::HITS); // Read L3 hits.
+    }
+    // Determine the cache hierarchy level where the 8-byte PTE read was satisfied.
+    ptw_cache_hit_level_t hit_level = ptw_cache_hit_level_t::HIT_DRAM; // Default to DRAM.
+    if (c1_hits_after > c1_hits_before) {
+        hit_level = ptw_cache_hit_level_t::HIT_L1D; // Satisfied by L1D cache hit.
+    } else if (c2_hits_after > c2_hits_before) {
+        hit_level = ptw_cache_hit_level_t::HIT_L2;  // Satisfied by L2 cache hit.
+    } else if (c3_hits_after > c3_hits_before) {
+        hit_level = ptw_cache_hit_level_t::HIT_L3;  // Satisfied by L3 cache hit.
+    } else {
+        hit_level = ptw_cache_hit_level_t::HIT_DRAM; // Missed caches; serviced by DRAM.
+    }
+    // Record the outcome in per-core MMU stats.
+    stats_.record_ptw_cache_access(ptw_level, hit_level); // Record per-level cache hit.
+    return hit_level;                                     // Return resolved hit level.
 }
 
 bool
@@ -143,11 +178,12 @@ page_table_walker_t::walk(const memref_t &memref, addr_t vaddr, ptw_result_t *re
     int memory_reads = 0;
     for (size_t i = static_cast<size_t>(deepest_pwc_hit_idx + 1);
          i < local_result.steps.size(); ++i) {
-        const ptw_step_record_t &step = local_result.steps[i];
+        ptw_step_record_t &step = local_result.steps[i]; // Mutable reference to walk step.
         // Issue an 8-byte physical memory read for `step.entry_paddr` into the coupled
-        // data cache (if attached) and increment the PTW memory read counter.
-        issue_pte_cache_read(memref, step.entry_paddr);
-        ++memory_reads;
+        // data cache (if attached), determine cache hit level, and record the outcome.
+        step.cache_hit_level =
+            issue_pte_cache_read(memref, step.entry_paddr, step.level); // Issue read & save hit level.
+        ++memory_reads; // Increment count of memory reads issued in this walk.
         // If this step is an intermediate directory, insert it into the PWC for future walks.
         if (!step.is_leaf && pwc_.is_enabled()) {
             pwc_.insert(pid, step.level, vaddr, step.next_paddr);

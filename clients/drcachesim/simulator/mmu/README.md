@@ -99,9 +99,16 @@ Coordinates the hardware page table walk on an L2 TLB miss:
 3. Probes `page_walk_cache_t` from `L3` down to `leaf_level + 1` to find the deepest cached intermediate table frame.
 4. Walks each remaining level down to `leaf_level`:
    - Computes the 8-byte physical PTE address `pte_phys_addr`.
-   - If a coupled data cache (`caching_device_t *`) is attached, issues an 8-byte physical `TRACE_TYPE_READ` `memref_t` to the cache and compares pre/post `num_Hits` to classify the PTE read as a data-cache hit or miss.
+   - If a coupled data cache (`caching_device_t *`) is attached, issues an 8-byte physical `TRACE_TYPE_READ` `memref_t` to the cache, inspects cache hit counters across the hierarchy (L1D, L2, L3), and classifies the PTE read as satisfied by `L1D`, `L2`, `L3`, or `DRAM`.
    - Inserts intermediate directory entries into `page_walk_cache_t`.
-5. Accumulates detailed metrics in `mmu_stats_t`.
+5. Accumulates detailed metrics in `mmu_stats_t`, including per-walk-level cache hit breakdown:
+   ```text
+   PTW cache hits by walk level:
+     L4 (PML4E): L1D=       0  L2=       0  L3=       0  DRAM=       2
+     L3 (PDPTE): L1D=       0  L2=       0  L3=       0  DRAM=       3
+     L2 (PDE):   L1D=       2  L2=       4  L3=       0  DRAM=       6
+     L1 (PTE):   L1D=     138  L2=      71  L3=       0  DRAM=      80
+   ```
 
 ### 3.7 `performance_model_t` (Microarchitectural Cycles, CPI, and IPC)
 Synthesizes processor retirement, data cache stall cycles, and TLB / Page Table Walk stall cycles:

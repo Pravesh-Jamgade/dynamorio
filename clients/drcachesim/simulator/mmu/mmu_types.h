@@ -109,6 +109,43 @@ enum class ptw_level_t : int {
 };
 
 /**
+ * @brief Enumerates the cache/memory hierarchy level where a PTE read was satisfied.
+ */
+enum class ptw_cache_hit_level_t : int {
+    HIT_L1D = 0,  // Satisfied by Level 1 Data Cache.
+    HIT_L2 = 1,   // Satisfied by Level 2 Cache.
+    HIT_L3 = 2,   // Satisfied by Level 3 / LLC Cache.
+    HIT_DRAM = 3, // Satisfied by Main Memory (DRAM).
+};
+
+/**
+ * @brief Helper utility providing string representations for ptw_cache_hit_level_t.
+ */
+class ptw_cache_hit_level_helper_t {
+public:
+    /**
+     * @brief Returns a short human-readable string for the cache hit level.
+     */
+    static inline const char *
+    to_string(ptw_cache_hit_level_t hit_level)
+    {
+        // Dispatch based on the cache hit level.
+        switch (hit_level) {
+        case ptw_cache_hit_level_t::HIT_L1D: // L1 Data Cache.
+            return "L1D";
+        case ptw_cache_hit_level_t::HIT_L2:  // L2 Unified Cache.
+            return "L2";
+        case ptw_cache_hit_level_t::HIT_L3:  // L3 Shared Cache.
+            return "L3";
+        case ptw_cache_hit_level_t::HIT_DRAM: // Main Memory.
+            return "DRAM";
+        }
+        // Fallback for unexpected values.
+        return "UNKNOWN";
+    }
+};
+
+/**
  * @brief Utility class providing conversion methods for page sizes and radix levels.
  */
 class page_size_helper_t {
@@ -427,6 +464,8 @@ struct ptw_step_record_t {
     addr_t next_paddr = 0;       // Physical address stored inside the resolved entry.
     bool pwc_hit = false;        // True if this level was satisfied by Page Walk Cache.
     bool is_leaf = false;        // True if this level terminated the walk (PTE or PS=1).
+    ptw_cache_hit_level_t cache_hit_level =
+        ptw_cache_hit_level_t::HIT_DRAM; // Cache hierarchy level where PTE read hit.
 };
 
 /**
