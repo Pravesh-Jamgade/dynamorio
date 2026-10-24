@@ -55,6 +55,8 @@
 #include "../simulator/cache_lru.h"
 // Cache statistics for external coupled PTW testing.
 #include "../simulator/cache_stats.h"
+// Speculative wrong-path execution engine.
+#include "../simulator/cpu/wrong_path.h"
 // Complete Out-of-Order CPU and 3-level cache simulator.
 #include "../simulator/cpu/cpu_simulator.h"
 // Memory reference structure definition.
@@ -865,6 +867,174 @@ unit_test_ooo_cpu_simulator()
     assert(sim.print_results());
 }
 
+// Test 12: Speculative Wrong-Path Execution, Cache Pollution, and Pipeline Squash.
+static void
+unit_test_wrong_path_speculation()
+{
+    // 1. Standalone test of speculative wrong-path engine.
+    wrong_path_knobs_t wp_knobs;
+    // Enable wrong-path speculation.
+    wp_knobs.enable_wrong_path = true;
+    // Set max speculative fetch depth to 16 instructions.
+    wp_knobs.max_speculative_depth = 16;
+    // Set load probability to 50% to ensure memory traffic.
+    wp_knobs.load_probability = 0.50;
+    // Set store probability to 25% to verify store buffering.
+    wp_knobs.store_probability = 0.25;
+    // Disable inner branches for deterministic linear instruction stream.
+    wp_knobs.branch_probability = 0.0;
+
+    // Instantiate speculative wrong-path engine.
+    speculative_wrong_path_engine_t wp_engine(wp_knobs);
+    // Verify engine is enabled.
+    assert(wp_engine.is_enabled());
+
+    // Misprediction setup: ground truth branch is Taken to 0x500000, but predictor predicted Not-Taken.
+    branch_prediction_t pred;
+    // Set prediction to Not-Taken.
+    pred.predicted_taken = false;
+    // Set predicted target to 0 (fallthrough).
+    pred.predicted_target = 0;
+    // Set ground truth to Taken.
+    pred.actual_taken = true;
+    // Set ground truth target to 0x500000.
+    pred.actual_target = 0x500000;
+    // Set misprediction flags.
+    pred.direction_mispredicted = true;
+    pred.target_mispredicted = true;
+    // Confirm prediction is a misprediction.
+    assert(pred.is_mispredicted());
+
+    // In-out sequence ID counter.
+    uint64_t next_seq_id = 100;
+    // Generate speculative wrong-path stream along the fallthrough path.
+    std::vector<dyn_instruction_t> stream = wp_engine.generate_wrong_path_stream(
+        /*branch_seq_id=*/99, /*branch_pc=*/0x400000, pred, /*fetch_width=*/4,
+        /*penalty_cycles=*/10, /*pid=*/111, /*tid=*/222, next_seq_id);
+
+    // Verify wrong-path instructions were generated.
+    assert(!stream.empty());
+    // Verify fetch count respects max speculative depth.
+    assert(stream.size() <= 16);
+    // Fallthrough address must be 0x400004 since predictor predicted Not-Taken.
+    assert(stream[0].pc == 0x400004);
+    // Verify instruction is flagged as wrong-path speculative.
+    assert(stream[0].is_wrong_path == true);
+    // Verify PID was recorded.
+    assert(stream[0].pid == 111);
+    // Verify TID was recorded.
+    assert(stream[0].tid == 222);
+
+    // Verify statistics tracking.
+    const wrong_path_stats_t &stats = wp_engine.get_stats();
+    // Verify misprediction counter incremented.
+    assert(stats.mispredictions_handled == 1);
+    // Verify instructions fetched matches stream size.
+    assert(stats.instructions_fetched == static_cast<int64_t>(stream.size()));
+
+    // 2. Test speculative cache pollution via wrong-path load execution.
+    three_level_cache_knobs_t cache_knobs;
+    // Configure single-core cache hierarchy.
+    cache_knobs.num_cores = 1;
+    // L1D size: 4 KB.
+    cache_knobs.l1d_size = 4096;
+    // L2 size: 16 KB.
+    cache_knobs.l2_size = 16384;
+    // L3 size: 65 KB.
+    cache_knobs.l3_size = 65536;
+    // Instantiate 3-level data cache.
+    three_level_cache_t cache(cache_knobs);
+
+    // Create a speculative load instruction on the wrong path.
+    dyn_instruction_t spec_load;
+    // Assign sequence ID.
+    spec_load.seq_id = 101;
+    // Operation type is Load.
+    spec_load.op_type = cpu_op_type_t::OP_LOAD;
+    // PC on wrong path.
+    spec_load.pc = 0x400008;
+    // Address accessed speculatively.
+    spec_load.mem_addr = 0x7fffbeef0000ULL;
+    // Load size: 8 bytes.
+    spec_load.mem_size = 8;
+    // Mark as wrong path.
+    spec_load.is_wrong_path = true;
+
+    // Simulate speculative load access into the cache hierarchy.
+    wp_engine.simulate_speculative_load(/*core_id=*/0, spec_load, &cache, /*dtlb=*/nullptr);
+    // Verify speculative cache accesses incremented.
+    assert(wp_engine.get_stats().cache_accesses == 1);
+    // Verify speculative cache misses incremented.
+    assert(wp_engine.get_stats().cache_misses == 1);
+
+    // Now execute a normal right-path demand load to the EXACT same address:
+    // Because the speculative wrong-path load fetched the line into L1D,
+    // this demand load MUST HIT in L1D! This proves microarchitectural cache pollution!
+    memref_t demand_load = {};
+    // Operation type is Read.
+    demand_load.data.type = TRACE_TYPE_READ;
+    // Address matches speculative load.
+    demand_load.data.addr = 0x7fffbeef0000ULL;
+    // Access size: 8 bytes.
+    demand_load.data.size = 8;
+    // Process ID.
+    demand_load.data.pid = 111;
+    // Thread ID.
+    demand_load.data.tid = 222;
+    // Request address from cache hierarchy.
+    cache_access_result_t res = cache.request(0, demand_load);
+    // Verify hit in L1D cache due to speculative pre-population!
+    assert(res.level == cache_hit_level_t::HIT_L1D);
+
+    // 3. Test squash accounting.
+    wp_engine.record_squash(stream.size());
+    // Verify squashed instruction counter updated.
+    assert(wp_engine.get_stats().instructions_squashed == static_cast<int64_t>(stream.size()));
+
+    // 4. Test end-to-end integration with cpu_simulator_t.
+    cpu_simulator_knobs_t sim_knobs;
+    // Single core simulator.
+    sim_knobs.num_cores = 1;
+    // Enable wrong-path speculation.
+    sim_knobs.enable_wrong_path = true;
+    // Max speculative depth: 8.
+    sim_knobs.max_speculative_depth = 8;
+    // Branch misprediction penalty: 10 cycles.
+    sim_knobs.branch_mispredict_penalty = 10;
+    // Instantiate simulator.
+    cpu_simulator_t sim(sim_knobs);
+
+    // Issue sequential instructions.
+    sim.process_memref(generate_mem_ref(0x400000, 0x400000, 1, 1, TRACE_TYPE_INSTR));
+    sim.process_memref(generate_mem_ref(0x400004, 0x400004, 1, 1, TRACE_TYPE_INSTR));
+    // Now trigger a backwards branch jump: from 0x400004 to 0x400000.
+    // Predictor has cold state, so this triggers a misprediction flush!
+    sim.process_memref(generate_mem_ref(0x400000, 0x400000, 1, 1, TRACE_TYPE_INSTR));
+
+    // Retrieve core 0 pointer.
+    cpu_core_t *core = sim.get_core(0);
+    // Verify pointer is non-null.
+    assert(core != nullptr);
+    // Drain remaining in-flight instructions.
+    core->flush_and_drain_pipeline();
+
+    // Verify that the wrong path engine inside the core handled the misprediction and squashed instructions.
+    const wrong_path_stats_t &core_wp_stats = core->get_wrong_path_engine().get_stats();
+    // Must have handled at least 1 misprediction.
+    assert(core_wp_stats.mispredictions_handled >= 1);
+    // Must have fetched speculative instructions.
+    assert(core_wp_stats.instructions_fetched > 0);
+    // Must have squashed speculative instructions upon resolution.
+    assert(core_wp_stats.instructions_squashed > 0);
+
+    // Verify ROB and LSQ have drained and are completely clean.
+    assert(core->get_rob().empty());
+    // Verify Load Queue is empty.
+    assert(core->get_lsq().lq_size() == 0);
+    // Verify Store Queue is empty.
+    assert(core->get_lsq().sq_size() == 0);
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -893,6 +1063,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_lsq_and_forwarding();
     // Run full Out-of-Order CPU Core and 3-level cache simulator unit test.
     unit_test_ooo_cpu_simulator();
+    // Run Speculative Wrong-Path Execution, Cache Pollution, and Pipeline Squash unit test.
+    unit_test_wrong_path_speculation();
 }
 
 } // namespace drmemtrace

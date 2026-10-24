@@ -217,6 +217,7 @@ add_exported_library(drmemtrace_simulator STATIC
   simulator/cpu/rob.cpp
   simulator/cpu/lsq.cpp
   simulator/cpu/cpu_core.cpp
+  simulator/cpu/wrong_path.cpp
   simulator/cpu/cpu_simulator.cpp
   )
 

@@ -123,6 +123,7 @@ struct dyn_instruction_t {
     bool is_write = false;           // True for store, false for load.
 
     // Microarchitectural tracking flags.
+    bool is_wrong_path = false;      // True if fetched along a mispredicted branch path.
     branch_prediction_t branch_info; // Branch prediction metadata if a branch.
     pipeline_stage_t stage = pipeline_stage_t::STAGE_FETCH; // Current pipeline stage.
     uint64_t fetch_cycle = 0;        // Cycle when fetched.

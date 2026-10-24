@@ -58,6 +58,8 @@
 #include "cpu/rob.h"
 // Provide Load-Store Queue.
 #include "cpu/lsq.h"
+// Provide Speculative Wrong-Path execution engine.
+#include "cpu/wrong_path.h"
 // Provide 3-Level Cache hierarchy.
 #include "cpu/three_level_cache.h"
 // Provide TLB interfaces.
@@ -87,6 +89,8 @@ struct cpu_core_knobs_t {
         , btb_entries(1024)                    // Branch Target Buffer slots.
         , branch_mispredict_penalty(14)        // Cycles lost on pipeline flush after misprediction.
         , alu_latency(1)                       // ALU execution latency in cycles.
+        , enable_wrong_path(true)              // Enable speculative wrong-path execution.
+        , max_speculative_depth(32)            // Max instructions fetched along wrong path.
     {
     }
 
@@ -101,6 +105,8 @@ struct cpu_core_knobs_t {
     size_t btb_entries;                        // Number of BTB entries.
     uint64_t branch_mispredict_penalty;        // Pipeline flush latency in cycles.
     uint64_t alu_latency;                      // Fixed execution latency for general integer ops.
+    bool enable_wrong_path;                    // Whether to simulate speculative wrong-path execution.
+    size_t max_speculative_depth;              // Maximum speculative instructions fetched on wrong path.
 };
 
 /**
@@ -172,6 +178,7 @@ public:
     rob_t &get_rob() { return rob_; }
     lsq_t &get_lsq() { return lsq_; }
     register_scoreboard_t &get_scoreboard() { return scoreboard_; }
+    speculative_wrong_path_engine_t &get_wrong_path_engine() { return wrong_path_engine_; }
 
 private:
     // Dispatches an instruction into the ROB, scoreboard, and LSQ, advancing cycles if stalled.
@@ -197,6 +204,7 @@ private:
     register_scoreboard_t scoreboard_;         // Register Dependency Scoreboard.
     rob_t rob_;                                // Reorder Buffer.
     lsq_t lsq_;                                // Load-Store Queue.
+    speculative_wrong_path_engine_t wrong_path_engine_; // Speculative wrong-path engine.
 
     uint64_t current_cycle_ = 1;               // Current processor clock cycle.
     uint64_t next_seq_id_ = 1;                 // Sequence ID counter for dynamic instructions.

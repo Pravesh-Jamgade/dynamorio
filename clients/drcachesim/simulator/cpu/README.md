@@ -61,6 +61,8 @@ clients/drcachesim/simulator/cpu/
 ├── rob.cpp              # Reorder Buffer: circular FIFO, in-order commit, head-of-line stalls, squashes
 ├── lsq.h                # lsq_t declaration
 ├── lsq.cpp              # Load-Store Queue: store-to-load forwarding and store buffering until commit
+├── wrong_path.h         # Speculative wrong-path execution engine declaration
+├── wrong_path.cpp       # Wrong-path instruction stream synthesis, cache/TLB pollution, and squashes
 ├── cpu_core.h           # cpu_core_t declaration
 ├── cpu_core.cpp         # Complete out-of-order execution pipeline engine
 ├── cpu_simulator.h      # cpu_simulator_t declaration
@@ -87,3 +89,11 @@ clients/drcachesim/simulator/cpu/
 - Chains `L1D.parent_ = L2`, `L2.parent_ = L3`, `L3.parent_ = nullptr` (DRAM).
 - Both demand memory accesses (`TRACE_TYPE_READ` / `TRACE_TYPE_WRITE`) and hardware Page Table Walker 8-byte PTE memory reads (`ptw_request()`) traverse the exact same cache sets.
 - Models cache contention and cache pollution caused by page table walks upon Page Walk Cache misses.
+
+### 4.4 Speculative Wrong-Path Execution (`speculative_wrong_path_engine_t`)
+- When a branch mispredicts in `cpu_core_t`, the processor does **not** simply stall idle.
+- The pipeline fetches, decodes, and dispatches instructions along the **mispredicted path** (starting at the wrong target or fallthrough PC) for the duration of the branch resolution penalty (default: 14 cycles).
+- **Buffer Occupancy**: Wrong-path instructions consume physical ROB slots, scoreboard registers, and Load/Store Queue entries.
+- **Speculative Cache & TLB Pollution**: Speculative loads access L1D, L2, L3, and the DTLB. Cold cache lines are brought from DRAM into the hierarchy.
+- **Architectural Store Safety**: Speculative stores buffer in the SQ, but **never commit to cache** because commit is strictly in program order.
+- **Squash on Resolution**: When the branch resolves, `cpu_core_t` calls `rob_.squash_after()`, `scoreboard_.squash_after()`, and `lsq_.squash_after()`. All wrong-path instructions are discarded, but the **cache lines and TLB translations they loaded remain in hardware** (faithfully modeling Spectre-style speculative side effects).

@@ -106,6 +106,8 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         core_knobs.btb_entries = knobs_.btb_entries;
         core_knobs.branch_mispredict_penalty = knobs_.branch_mispredict_penalty;
         core_knobs.alu_latency = knobs_.alu_latency;
+        core_knobs.enable_wrong_path = knobs_.enable_wrong_path;
+        core_knobs.max_speculative_depth = knobs_.max_speculative_depth;
 
         // Construct the core pipeline coupling Front-End, ROB, LSQ, TLBs, and 3-level cache!
         cores_[i].reset(new cpu_core_t(core_knobs, cache_hierarchy_.get(),

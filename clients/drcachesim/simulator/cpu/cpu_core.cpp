@@ -64,7 +64,11 @@ cpu_core_t::cpu_core_t(const cpu_core_knobs_t &knobs,
     // Initialize Load-Store Queue with configured capacities.
     , lsq_(knobs.lq_capacity, knobs.sq_capacity)
 {
-    // Constructor body.
+    // Configure speculative wrong-path engine.
+    wrong_path_knobs_t wp_knobs;
+    wp_knobs.enable_wrong_path = knobs_.enable_wrong_path;
+    wp_knobs.max_speculative_depth = knobs_.max_speculative_depth;
+    wrong_path_engine_ = speculative_wrong_path_engine_t(wp_knobs);
 }
 
 bool
@@ -112,10 +116,46 @@ cpu_core_t::process_memref(const memref_t &memref)
                 // Incur pipeline squash penalty.
                 branch_recovery_until_cycle_ = current_cycle_ + knobs_.branch_mispredict_penalty;
                 branch_squash_cycles_ += knobs_.branch_mispredict_penalty;
-                // Squash younger speculative instructions from the ROB, scoreboard, and LSQ.
-                rob_.squash_after(instr.seq_id);
+
+                // 1. Speculative Wrong-Path Execution!
+                // Fetch and execute instructions along the mispredicted path before the branch resolves!
+                if (wrong_path_engine_.is_enabled()) {
+                    std::vector<dyn_instruction_t> wrong_path =
+                        wrong_path_engine_.generate_wrong_path_stream(
+                            instr.seq_id, last_pc_, pred, knobs_.fetch_width,
+                            knobs_.branch_mispredict_penalty, instr.pid, instr.tid,
+                            next_seq_id_);
+
+                    // Dispatch and execute wrong-path instructions through the pipeline!
+                    for (auto &wp_instr : wrong_path) {
+                        // Allocate space in the ROB and LSQ.
+                        if (rob_.can_dispatch()) {
+                            rob_.dispatch(wp_instr);
+                            scoreboard_.allocate_destination(wp_instr);
+
+                            if (wp_instr.op_type == cpu_op_type_t::OP_LOAD) {
+                                if (lsq_.can_dispatch_load()) {
+                                    lsq_.dispatch_load(wp_instr);
+                                    // Speculatively access the TLB and 3-level data cache!
+                                    // This realistically pulls speculative lines into L1D/L2/L3!
+                                    wrong_path_engine_.simulate_speculative_load(
+                                        knobs_.core_id, wp_instr, cache_hierarchy_, dtlb_);
+                                }
+                            } else if (wp_instr.op_type == cpu_op_type_t::OP_STORE) {
+                                if (lsq_.can_dispatch_store()) {
+                                    // Stores buffer in the SQ, but NEVER commit to cache!
+                                    lsq_.dispatch_store(wp_instr);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Once the branch resolves after its penalty, squash younger speculative instructions!
+                size_t squashed = rob_.squash_after(instr.seq_id);
                 scoreboard_.squash_after(instr.seq_id);
                 lsq_.squash_after(instr.seq_id);
+                wrong_path_engine_.record_squash(squashed);
             }
         }
         last_pc_ = instr.pc;
@@ -353,6 +393,7 @@ cpu_core_t::print_stats(std::ostream &os, const std::string &prefix) const
     branch_predictor_.print_stats(os, prefix + "  ");
     rob_.print_stats(os, prefix + "  ");
     lsq_.print_stats(os, prefix + "  ");
+    wrong_path_engine_.print_stats(os, prefix + "  ");
 }
 
 void
@@ -363,6 +404,7 @@ cpu_core_t::reset()
     scoreboard_.reset();
     rob_.reset();
     lsq_.reset();
+    wrong_path_engine_.reset();
     current_cycle_ = 1;
     next_seq_id_ = 1;
     branch_recovery_until_cycle_ = 0;
