@@ -498,9 +498,47 @@ droption_t<unsigned int> op_TLB_L2_assoc(
 
 droption_t<std::string>
     op_TLB_replace_policy(DROPTION_SCOPE_FRONTEND, "TLB_replace_policy",
-                          REPLACE_POLICY_LFU, "TLB replacement policy",
+                          REPLACE_POLICY_LFU, "TLB replacement policy (LFU, LRU, FIFO)",
                           "Specifies the replacement policy for TLBs. "
-                          "Supported policies: LFU (Least Frequently Used).");
+                          "Supported policies: LFU (Least Frequently Used), "
+                          "LRU (Least Recently Used), FIFO (First-In-First-Out).");
+
+// Option enabling 4-level radix page table and hardware page table walker on L2 TLB miss.
+droption_t<bool> op_TLB_enable_ptw(
+    DROPTION_SCOPE_FRONTEND, "TLB_enable_ptw", false,
+    "Simulate 4-level radix page table walk and Page Walk Cache on L2 TLB misses",
+    "When enabled, last-level (L2) TLB misses trigger a hardware page table walk across "
+    "a 4-level radix page table (PML4 -> PDPT -> PD -> PT), probing a per-core Page Walk "
+    "Cache (PWC) and storing resolved VPN->PPN translations in TLB entries.");
+
+// Option enabling 2MB and 1GB huge-page detection and TLB simulation.
+droption_t<bool> op_TLB_enable_huge_pages(
+    DROPTION_SCOPE_FRONTEND, "TLB_enable_huge_pages", false,
+    "Detect and simulate 2MB and 1GB huge pages in the TLB and Page Table Walker",
+    "When enabled, detects 2MB and 1GB huge pages (via contiguous PFN alignment, "
+    "/proc/pid/smaps, or /proc/kpageflags) and simulates huge-page TLB entries and "
+    "shortened 3-level (2MB PDE) or 2-level (1GB PDPTE) page table walks.");
+
+// Option specifying the number of entries in each core's hardware Page Walk Cache.
+droption_t<unsigned int> op_TLB_pwc_entries(
+    DROPTION_SCOPE_FRONTEND, "TLB_pwc_entries", 32,
+    "Number of entries in each core's Page Walk Cache (0 disables PWC)",
+    "Specifies the number of entries in each core's hardware Page Walk Cache (PWC) "
+    "for caching intermediate PML4E/PDPTE/PDE translations. Set to 0 to disable.");
+
+// Option specifying the associativity of each core's hardware Page Walk Cache.
+droption_t<unsigned int> op_TLB_pwc_assoc(
+    DROPTION_SCOPE_FRONTEND, "TLB_pwc_assoc", 4,
+    "Associativity of each core's Page Walk Cache",
+    "Specifies the set associativity of each core's hardware Page Walk Cache (PWC).");
+
+// Option enabling coupled PTW memory reads into the per-core CPU data cache.
+droption_t<bool> op_TLB_couple_ptw_dcache(
+    DROPTION_SCOPE_FRONTEND, "TLB_couple_ptw_dcache", false,
+    "Issue 8-byte physical PTE memory reads into a coupled per-core data cache",
+    "When enabled, each uncached step of a hardware page table walk issues an 8-byte "
+    "physical TRACE_TYPE_READ for the page table entry into a coupled per-core data "
+    "cache configured by -line_size, -L1D_size, and -L1D_assoc.");
 
 droption_t<std::string>
     op_tool(DROPTION_SCOPE_FRONTEND,

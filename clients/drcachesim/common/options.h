@@ -151,6 +151,13 @@ extern dynamorio::droption::droption_t<unsigned int> op_TLB_L1D_assoc;
 extern dynamorio::droption::droption_t<unsigned int> op_TLB_L2_entries;
 extern dynamorio::droption::droption_t<unsigned int> op_TLB_L2_assoc;
 extern dynamorio::droption::droption_t<std::string> op_TLB_replace_policy;
+// Options for realistic MMU, hardware page table walk, Page Walk Cache, huge pages,
+// and coupled PTW data cache simulation.
+extern dynamorio::droption::droption_t<bool> op_TLB_enable_ptw;
+extern dynamorio::droption::droption_t<bool> op_TLB_enable_huge_pages;
+extern dynamorio::droption::droption_t<unsigned int> op_TLB_pwc_entries;
+extern dynamorio::droption::droption_t<unsigned int> op_TLB_pwc_assoc;
+extern dynamorio::droption::droption_t<bool> op_TLB_couple_ptw_dcache;
 extern dynamorio::droption::droption_t<std::string> op_tool;
 extern dynamorio::droption::droption_t<unsigned int> op_verbose;
 extern dynamorio::droption::droption_t<bool> op_show_func_trace;

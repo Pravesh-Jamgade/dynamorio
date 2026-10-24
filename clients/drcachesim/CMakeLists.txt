@@ -204,6 +204,12 @@ add_exported_library(drmemtrace_simulator STATIC
   simulator/snoop_filter.cpp
   simulator/tlb.cpp
   simulator/tlb_simulator.cpp
+  simulator/mmu/physical_frame_allocator.cpp
+  simulator/mmu/huge_page_detector.cpp
+  simulator/mmu/page_table.cpp
+  simulator/mmu/page_walk_cache.cpp
+  simulator/mmu/mmu_stats.cpp
+  simulator/mmu/page_table_walker.cpp
   )
 
 add_exported_library(drmemtrace_record_filter STATIC

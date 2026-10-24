@@ -218,6 +218,15 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         knobs.use_physical = op_use_physical.get_value();
         knobs.v2p_file =
             get_aux_file_path(op_v2p_file.get_value(), DRMEMTRACE_V2P_FILENAME);
+        // Populate realistic MMU, PTW, PWC, huge-page, and coupled cache knobs.
+        knobs.enable_page_table_walk = op_TLB_enable_ptw.get_value();
+        knobs.enable_huge_pages = op_TLB_enable_huge_pages.get_value();
+        knobs.TLB_pwc_entries = op_TLB_pwc_entries.get_value();
+        knobs.TLB_pwc_assoc = op_TLB_pwc_assoc.get_value();
+        knobs.couple_ptw_to_dcache = op_TLB_couple_ptw_dcache.get_value();
+        knobs.ptw_dcache_line_size = op_line_size.get_value();
+        knobs.ptw_dcache_size = op_L1D_size.get_value();
+        knobs.ptw_dcache_assoc = op_L1D_assoc.get_value();
         analysis_tool_t *tlb_simulator = tlb_simulator_create(knobs);
         return tlb_simulator;
     } else if (tool == HISTOGRAM) {

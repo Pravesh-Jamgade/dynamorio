@@ -1,5 +1,5 @@
 /* **********************************************************
- * Copyright (c) 2015-2023 Google, Inc.  All rights reserved.
+ * Copyright (c) 2015-2026 Google, Inc.  All rights reserved.
  * **********************************************************/
 
 /*
@@ -30,24 +30,50 @@
  * DAMAGE.
  */
 
-/* tlb_entry: represents a TLB entry.
+/* tlb_entry.h: Represents a single hardware TLB entry storing process ID (ASID/PID),
+ * virtual page tag (VPN), translated physical page number (PPN), page granularity
+ * (4KB, 2MB, or 1GB), and access/dirty status bits.
  */
 
-#ifndef _TLB_ENTRY_H_
-#define _TLB_ENTRY_H_ 1
+#ifndef _TLB_ENTRY_H_ // Guard against multiple inclusions.
+#define _TLB_ENTRY_H_ 1 // Define inclusion guard macro.
 
-#include "caching_device_block.h"
+#include "caching_device_block.h" // Provide base caching_device_block_t class.
+#include "mmu/mmu_types.h"        // Provide page_size_kind_t and addr_t.
 
-namespace dynamorio {
-namespace drmemtrace {
+namespace dynamorio {  // Outer DynamoRIO namespace.
+namespace drmemtrace { // DrMemtrace simulation namespace.
 
+/**
+ * @brief Represents a hardware TLB entry extending caching_device_block_t.
+ */
 class tlb_entry_t : public caching_device_block_t {
 public:
-    // process ID to differentiate virtual pages
-    // that have the same VPN but belong to different processes.
+    /**
+     * @brief Constructs an invalid TLB entry with default 4 KB granularity.
+     */
+    tlb_entry_t()
+        : caching_device_block_t()                         // Initialize base tag_ and counter_.
+        , pid_(0)                                          // Initialize process ID to 0.
+        , ppn_(0)                                          // Initialize physical page number to 0.
+        , page_size_kind_(page_size_kind_t::PAGE_SIZE_4KB) // Default to 4 KB page size.
+        , dirty_(false)                                    // Initialize dirty bit to false.
+    {
+    }
+
+    // Process ID (ASID) to differentiate virtual pages that share the same VPN
+    // across different processes.
     memref_pid_t pid_;
 
-    // XXX: support page privilege and MMU-related exceptions
+    // Translated Physical Page Number (PPN = physical_frame_base >> page_shift)
+    // populated by the hardware page table walker on a TLB fill.
+    addr_t ppn_;
+
+    // Page size granularity of this translation (4 KB, 2 MB, or 1 GB).
+    page_size_kind_t page_size_kind_;
+
+    // Hardware Dirty (D) bit indicating whether a write has hit this TLB entry.
+    bool dirty_;
 };
 
 } // namespace drmemtrace
