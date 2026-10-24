@@ -31,11 +31,24 @@ case "$CMD" in
     all|*)
         echo "Building simulator and tests using $NPROC parallel jobs..."
         make -j"$NPROC" all
+
+        # If a DynamoRIO CMake build directory exists, also rebuild drcachesim automatically!
+        if [ -f build/build.ninja ]; then
+            echo ""
+            echo "Rebuilding DynamoRIO live client (drcachesim) in build/..."
+            ninja -C build drcachesim
+        elif [ -f build/Makefile ]; then
+            echo ""
+            echo "Rebuilding DynamoRIO live client (drcachesim) in build/..."
+            make -C build -j"$NPROC" drcachesim
+        fi
+
         echo ""
         echo "=========================================================="
         echo "  BUILD SUCCESSFUL!"
-        echo "  Run traces:  ./bin/run_cpu_sim --trace <path> [options]"
-        echo "  Run tests:   ./build.sh test (or make test)"
+        echo "  Run traces:    ./bin/run_cpu_sim --trace <path> [options]"
+        echo "  Run live apps: ./build/bin64/drrun -t drmemtrace -simulator_type cpu -- ./app"
+        echo "  Run tests:     ./build.sh test (or make test)"
         echo "=========================================================="
         ;;
 esac
