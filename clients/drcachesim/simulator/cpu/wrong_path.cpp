@@ -151,6 +151,46 @@ speculative_wrong_path_engine_t::generate_wrong_path_stream(
 }
 
 void
+speculative_wrong_path_engine_t::simulate_speculative_fetch(
+    unsigned int core_id,
+    const dyn_instruction_t &instr,
+    three_level_cache_t *cache_hierarchy,
+    tlb_t *itlb)
+{
+    // Access L1 Instruction TLB to model speculative instruction translation.
+    if (itlb != nullptr) {
+        memref_t memref = {};
+        memref.instr.type = TRACE_TYPE_INSTR;
+        memref.instr.addr = instr.pc;
+        memref.instr.size = 4;
+        memref.instr.pid = instr.pid;
+        memref.instr.tid = instr.tid;
+        itlb->request(memref);
+    }
+
+    // Access L1 Instruction Cache to model speculative instruction cache allocation & pollution!
+    if (cache_hierarchy != nullptr) {
+        memref_t memref = {};
+        memref.instr.type = TRACE_TYPE_INSTR;
+        memref.instr.addr = instr.pc;
+        memref.instr.size = 4;
+        memref.instr.pid = instr.pid;
+        memref.instr.tid = instr.tid;
+
+        // Issue instruction fetch to L1I cache.
+        cache_access_result_t res = cache_hierarchy->request_instruction(core_id, memref);
+        ++stats_.icache_accesses;
+
+        if (res.hit_l1i) {
+            ++stats_.icache_hits;
+        } else {
+            // Speculative L1I miss: filled instruction cache line from L2/L3/DRAM!
+            ++stats_.icache_misses;
+        }
+    }
+}
+
+void
 speculative_wrong_path_engine_t::simulate_speculative_load(
     unsigned int core_id,
     const dyn_instruction_t &load_instr,
@@ -217,6 +257,12 @@ speculative_wrong_path_engine_t::print_stats(std::ostream &os,
        << stats_.loads_executed << "\n";
     os << prefix << "  Wrong-path stores buffered:    " << std::setw(12)
        << stats_.stores_buffered << "\n";
+    os << prefix << "  Speculative L1I fetches:       " << std::setw(12)
+       << stats_.icache_accesses << "\n";
+    os << prefix << "  Speculative L1I hits:          " << std::setw(12)
+       << stats_.icache_hits << "\n";
+    os << prefix << "  Speculative L1I misses:        " << std::setw(12)
+       << stats_.icache_misses << " (polluting L1I)\n";
     os << prefix << "  Speculative cache accesses:    " << std::setw(12)
        << stats_.cache_accesses << "\n";
     os << prefix << "  Speculative cache hits:        " << std::setw(12)

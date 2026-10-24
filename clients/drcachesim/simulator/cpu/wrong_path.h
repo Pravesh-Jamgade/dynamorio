@@ -68,6 +68,9 @@ struct wrong_path_stats_t {
     int64_t instructions_squashed = 0;        // Speculative instructions squashed from ROB.
     int64_t loads_executed = 0;               // Speculative loads executed.
     int64_t stores_buffered = 0;              // Speculative stores buffered in SQ (never committed).
+    int64_t icache_accesses = 0;              // Speculative instruction fetches issued to L1I.
+    int64_t icache_hits = 0;                  // Speculative instruction fetches that hit in L1I.
+    int64_t icache_misses = 0;                // Speculative instruction fetches that missed in L1I.
     int64_t cache_accesses = 0;               // Speculative memory accesses issued to cache.
     int64_t cache_hits = 0;                   // Speculative accesses that hit in cache.
     int64_t cache_misses = 0;                 // Speculative accesses that missed and polluted cache.
@@ -129,6 +132,21 @@ public:
                                memref_pid_t pid,
                                memref_tid_t tid,
                                uint64_t &next_seq_id);
+
+    /**
+     * @brief Simulates speculative instruction fetch side effects (L1I and ITLB pollution)
+     *        for a wrong-path instruction.
+     *
+     * @param core_id         CPU core ID.
+     * @param instr           Speculative instruction fetched.
+     * @param cache_hierarchy Pointer to 3-level cache hierarchy.
+     * @param itlb            Pointer to L1 Instruction TLB.
+     */
+    void
+    simulate_speculative_fetch(unsigned int core_id,
+                               const dyn_instruction_t &instr,
+                               three_level_cache_t *cache_hierarchy,
+                               tlb_t *itlb);
 
     /**
      * @brief Simulates speculative memory hierarchy side effects (cache and TLB pollution)

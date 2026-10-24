@@ -82,6 +82,9 @@ struct cpu_simulator_knobs_t {
         , enable_wrong_path(true)               // Enable speculative wrong-path execution.
         , max_speculative_depth(32)             // Max instructions fetched along wrong path.
         , line_size(64)                         // 64-byte cache lines.
+        , l1i_size(32 * 1024)                   // 32 KB private L1I cache per core.
+        , l1i_assoc(8)                          // 8-way L1I.
+        , l1i_latency(1)                        // 1-cycle L1I hit latency.
         , l1d_size(32 * 1024)                   // 32 KB private L1D cache per core.
         , l1d_assoc(8)                          // 8-way L1D.
         , l2_size(256 * 1024)                   // 256 KB private L2 cache per core.
@@ -108,6 +111,9 @@ struct cpu_simulator_knobs_t {
     bool enable_wrong_path;                     // Whether to simulate speculative wrong-path execution.
     size_t max_speculative_depth;               // Max speculative instructions along wrong path.
     uint64_t line_size;                         // Cache block size in bytes.
+    uint64_t l1i_size;                          // L1I size in bytes.
+    unsigned int l1i_assoc;                     // L1I associativity.
+    uint64_t l1i_latency;                       // L1I hit latency.
     uint64_t l1d_size;                          // L1D size in bytes.
     unsigned int l1d_assoc;                     // L1D associativity.
     uint64_t l2_size;                           // L2 size in bytes.

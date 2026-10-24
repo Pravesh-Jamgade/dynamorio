@@ -170,6 +170,7 @@ public:
     // Query methods.
     uint64_t get_current_cycle() const { return current_cycle_; }
     int64_t total_instructions_retired() const { return total_instructions_retired_; }
+    int64_t icache_miss_stall_cycles() const { return icache_miss_stall_cycles_; }
     double get_ipc() const;
     double get_cpi() const;
 
@@ -217,6 +218,7 @@ private:
     int64_t total_loads_ = 0;                  // Total load instructions executed.
     int64_t total_stores_ = 0;                 // Total store instructions executed.
     int64_t branch_squash_cycles_ = 0;         // Cycles lost to branch misprediction flushes.
+    int64_t icache_miss_stall_cycles_ = 0;     // Front-End stall cycles due to L1I cache misses.
 };
 
 } // namespace drmemtrace

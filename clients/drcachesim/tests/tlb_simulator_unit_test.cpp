@@ -697,6 +697,18 @@ unit_test_three_level_cache()
     cache_access_result_t ptw_res2 = cache.ptw_request(0, 0x2008);
     assert(ptw_res2.level == cache_hit_level_t::HIT_L1D);
     assert(ptw_res2.latency_cycles == 4);
+
+    // 5. Instruction fetch to 0x3000 (cold -> DRAM fill into L1I).
+    memref_t ifetch1 = generate_mem_ref(0x3000, 0x3000, 1, 1, TRACE_TYPE_INSTR);
+    cache_access_result_t ires1 = cache.request_instruction(0, ifetch1);
+    assert(ires1.level == cache_hit_level_t::HIT_DRAM);
+    assert(ires1.latency_cycles == knobs.l1i_latency + knobs.l2_latency + knobs.l3_latency + knobs.dram_latency);
+
+    // 6. Immediate instruction fetch re-access to 0x3000 must HIT in L1I!
+    cache_access_result_t ires2 = cache.request_instruction(0, ifetch1);
+    assert(ires2.level == cache_hit_level_t::HIT_L1I);
+    assert(ires2.latency_cycles == knobs.l1i_latency);
+    assert(cache.get_l1i_cache(0) != nullptr);
 }
 
 // Test 8: Branch Target Buffer (BTB), Branch Predictor, and Return Address Stack (RAS).
@@ -985,6 +997,33 @@ unit_test_wrong_path_speculation()
     cache_access_result_t res = cache.request(0, demand_load);
     // Verify hit in L1D cache due to speculative pre-population!
     assert(res.level == cache_hit_level_t::HIT_L1D);
+
+    // Test speculative instruction fetch pollution in L1I cache:
+    dyn_instruction_t spec_fetch_instr;
+    // Set sequence ID.
+    spec_fetch_instr.seq_id = 102;
+    // PC on wrong path.
+    spec_fetch_instr.pc = 0x409000;
+    // Process ID.
+    spec_fetch_instr.pid = 111;
+    // Thread ID.
+    spec_fetch_instr.tid = 222;
+    // Mark as wrong path.
+    spec_fetch_instr.is_wrong_path = true;
+
+    // Simulate speculative instruction fetch into L1I cache.
+    wp_engine.simulate_speculative_fetch(/*core_id=*/0, spec_fetch_instr, &cache, /*itlb=*/nullptr);
+    // Verify speculative L1I accesses incremented.
+    assert(wp_engine.get_stats().icache_accesses == 1);
+    // Verify speculative L1I misses incremented.
+    assert(wp_engine.get_stats().icache_misses == 1);
+
+    // Right-path demand instruction fetch to 0x409000 will now HIT in L1I!
+    memref_t demand_fetch = generate_mem_ref(0x409000, 0x409000, 111, 222, TRACE_TYPE_INSTR);
+    // Request instruction from cache hierarchy.
+    cache_access_result_t ifetch_res = cache.request_instruction(0, demand_fetch);
+    // Verify hit in L1I cache due to speculative instruction pre-population!
+    assert(ifetch_res.level == cache_hit_level_t::HIT_L1I);
 
     // 3. Test squash accounting.
     wp_engine.record_squash(stream.size());

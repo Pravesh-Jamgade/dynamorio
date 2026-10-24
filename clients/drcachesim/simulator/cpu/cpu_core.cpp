@@ -102,6 +102,17 @@ cpu_core_t::process_memref(const memref_t &memref)
             itlb_->request(memref);
         }
 
+        // Route instruction fetch through L1 Instruction Cache if connected.
+        if (cache_hierarchy_ != nullptr) {
+            cache_access_result_t icache_res =
+                cache_hierarchy_->request_instruction(knobs_.core_id, memref);
+            if (icache_res.level != cache_hit_level_t::HIT_L1I) {
+                // Front-End stalls fetching missing instruction cache line from L2/L3/DRAM!
+                step_cycles(icache_res.latency_cycles);
+                icache_miss_stall_cycles_ += icache_res.latency_cycles;
+            }
+        }
+
         // Branch detection heuristic: if PC jumps by more than 16 bytes or backwards,
         // treat as a branch instruction.
         if (last_pc_ != 0 && (instr.pc > last_pc_ + 16 || instr.pc < last_pc_)) {
@@ -128,6 +139,10 @@ cpu_core_t::process_memref(const memref_t &memref)
 
                     // Dispatch and execute wrong-path instructions through the pipeline!
                     for (auto &wp_instr : wrong_path) {
+                        // Speculative instruction fetch accesses L1I cache and ITLB!
+                        wrong_path_engine_.simulate_speculative_fetch(
+                            knobs_.core_id, wp_instr, cache_hierarchy_, itlb_);
+
                         // Allocate space in the ROB and LSQ.
                         if (rob_.can_dispatch()) {
                             rob_.dispatch(wp_instr);
@@ -381,6 +396,8 @@ cpu_core_t::print_stats(std::ostream &os, const std::string &prefix) const
        << total_stores_ << "\n";
     os << prefix << "  Branch squash penalty cycles:  " << std::setw(12)
        << branch_squash_cycles_ << "\n";
+    os << prefix << "  L1I cache miss stall cycles:   " << std::setw(12)
+       << icache_miss_stall_cycles_ << "\n";
     os << prefix << "  Total execution cycles:        " << std::setw(12)
        << current_cycle_ << "\n";
     os << std::fixed << std::setprecision(4);
@@ -414,6 +431,7 @@ cpu_core_t::reset()
     total_loads_ = 0;
     total_stores_ = 0;
     branch_squash_cycles_ = 0;
+    icache_miss_stall_cycles_ = 0;
 }
 
 } // namespace drmemtrace

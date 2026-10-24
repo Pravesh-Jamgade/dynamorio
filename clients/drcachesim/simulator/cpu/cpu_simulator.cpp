@@ -50,10 +50,13 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
     // Allocate the shared multi-process 4-level radix page table manager.
     , address_space_mgr_(new mmu_address_space_manager_t())
 {
-    // 1. Initialize the 3-Level Data Cache hierarchy (L1D -> L2 -> Shared L3/LLC).
+    // 1. Initialize the 3-Level Cache hierarchy (split L1I/L1D -> L2 -> Shared L3/LLC).
     three_level_cache_knobs_t c_knobs;
     c_knobs.num_cores = knobs_.num_cores;
     c_knobs.line_size = knobs_.line_size;
+    c_knobs.l1i_size = knobs_.l1i_size;
+    c_knobs.l1i_assoc = knobs_.l1i_assoc;
+    c_knobs.l1i_latency = knobs_.l1i_latency;
     c_knobs.l1d_size = knobs_.l1d_size;
     c_knobs.l1d_assoc = knobs_.l1d_assoc;
     c_knobs.l2_size = knobs_.l2_size;

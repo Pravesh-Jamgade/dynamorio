@@ -30,9 +30,9 @@
  * DAMAGE.
  */
 
-/* three_level_cache.h: Implements a 3-level data cache hierarchy (private L1D,
- * private L2, and shared L3/LLC) through which both hardware Page Table Walks
- * (on Page Walk Cache misses) and CPU demand memory accesses flow.
+/* three_level_cache.h: Implements a 3-level cache hierarchy (private split L1I and L1D,
+ * private unified L2, and shared unified L3/LLC) through which both hardware Page Table Walks
+ * (on Page Walk Cache misses), CPU instruction fetches, and CPU demand memory accesses flow.
  */
 
 #ifndef _DRMEMTRACE_THREE_LEVEL_CACHE_H_ // Guard against multiple inclusions.
@@ -63,6 +63,7 @@ namespace drmemtrace {
  * @brief Identifies which level of the memory hierarchy serviced a cache request.
  */
 enum class cache_hit_level_t {
+    HIT_L1I,  // Serviced by private L1 Instruction Cache.
     HIT_L1D,  // Serviced by private L1 Data Cache.
     HIT_L2,   // Serviced by private L2 Cache.
     HIT_L3,   // Serviced by shared Last-Level Cache (L3/LLC).
@@ -77,12 +78,15 @@ struct three_level_cache_knobs_t {
     three_level_cache_knobs_t()
         : num_cores(1)                   // Default 1 simulated CPU core.
         , line_size(64)                  // Default 64-byte cache line width.
+        , l1i_size(32 * 1024)            // Default 32 KB private L1 Instruction Cache per core.
+        , l1i_assoc(8)                   // Default 8-way associativity for L1I.
         , l1d_size(32 * 1024)            // Default 32 KB private L1 Data Cache per core.
         , l1d_assoc(8)                   // Default 8-way associativity for L1D.
         , l2_size(256 * 1024)            // Default 256 KB private L2 Cache per core.
         , l2_assoc(8)                    // Default 8-way associativity for L2.
         , l3_size(8 * 1024 * 1024)       // Default 8 MB shared L3 / Last-Level Cache.
         , l3_assoc(16)                   // Default 16-way associativity for L3.
+        , l1i_latency(1)                 // Default 1-cycle L1I hit latency.
         , l1d_latency(4)                 // Default 4-cycle L1D hit latency.
         , l2_latency(12)                 // Default 12-cycle L2 hit latency.
         , l3_latency(35)                 // Default 35-cycle L3 hit latency.
@@ -92,12 +96,15 @@ struct three_level_cache_knobs_t {
 
     unsigned int num_cores;              // Number of CPU cores sharing the hierarchy.
     uint64_t line_size;                  // Cache block/line size in bytes.
+    uint64_t l1i_size;                   // Byte size of each private L1I cache.
+    unsigned int l1i_assoc;              // Associativity of each private L1I cache.
     uint64_t l1d_size;                   // Byte size of each private L1D cache.
     unsigned int l1d_assoc;              // Associativity of each private L1D cache.
     uint64_t l2_size;                    // Byte size of each private L2 cache.
     unsigned int l2_assoc;               // Associativity of each private L2 cache.
     uint64_t l3_size;                    // Byte size of shared L3 / LLC cache.
     unsigned int l3_assoc;               // Associativity of shared L3 / LLC cache.
+    uint64_t l1i_latency;                // Hit latency in cycles for L1I.
     uint64_t l1d_latency;                // Hit latency in cycles for L1D.
     uint64_t l2_latency;                 // Hit latency in cycles for L2.
     uint64_t l3_latency;                 // Hit latency in cycles for L3.
@@ -108,6 +115,7 @@ struct three_level_cache_knobs_t {
  * @brief Result outcome for a single access through the 3-level cache hierarchy.
  */
 struct cache_access_result_t {
+    bool hit_l1i = false;                                    // True if hit in L1I.
     bool hit_l1d = false;                                    // True if hit in L1D.
     bool hit_l2 = false;                                     // True if hit in L2.
     bool hit_l3 = false;                                     // True if hit in L3.
@@ -116,7 +124,7 @@ struct cache_access_result_t {
 };
 
 /**
- * @brief Complete 3-level data cache hierarchy (Private L1D -> Private L2 -> Shared L3/LLC).
+ * @brief Complete 3-level cache hierarchy (Private L1I/L1D -> Private L2 -> Shared L3/LLC).
  */
 class three_level_cache_t {
 public:
@@ -143,6 +151,16 @@ public:
     request(unsigned int core, const memref_t &memref);
 
     /**
+     * @brief Processes an instruction fetch reference through the private L1I -> L2 -> L3 hierarchy.
+     *
+     * @param core   Core index originating the instruction fetch.
+     * @param memref The trace instruction fetch memory reference record.
+     * @return Completed cache_access_result_t describing servicing level and latency.
+     */
+    cache_access_result_t
+    request_instruction(unsigned int core, const memref_t &memref);
+
+    /**
      * @brief Processes an 8-byte Page Table Entry (PTE) physical read issued by the
      *        hardware Page Table Walker upon a Page Walk Cache (PWC) miss.
      *
@@ -152,6 +170,12 @@ public:
      */
     cache_access_result_t
     ptw_request(unsigned int core, addr_t pte_phys_addr);
+
+    /**
+     * @brief Returns the private L1I cache device pointer for `core`.
+     */
+    caching_device_t *
+    get_l1i_cache(unsigned int core) const;
 
     /**
      * @brief Returns the private L1D cache device pointer for `core`.
@@ -181,7 +205,7 @@ public:
     }
 
     /**
-     * @brief Prints formatted statistics for all L1D, L2, and L3 caches to std::cerr.
+     * @brief Prints formatted statistics for all L1I, L1D, L2, and L3 caches to std::cerr.
      *
      * @param prefix Indentation prefix string for each line.
      */
@@ -189,13 +213,15 @@ public:
     print_stats(const std::string &prefix = "") const;
 
     /**
-     * @brief Resets all statistics counters across all L1D, L2, and L3 caches.
+     * @brief Resets all statistics counters across all L1I, L1D, L2, and L3 caches.
      */
     void
     reset_stats();
 
 private:
     three_level_cache_knobs_t knobs_;                         // Hierarchy parameters.
+    std::vector<std::unique_ptr<cache_lru_t>> l1i_caches_;    // Per-core private L1Is.
+    std::vector<std::unique_ptr<cache_stats_t>> l1i_stats_;   // Per-core L1I statistics.
     std::vector<std::unique_ptr<cache_lru_t>> l1d_caches_;    // Per-core private L1Ds.
     std::vector<std::unique_ptr<cache_stats_t>> l1d_stats_;   // Per-core L1D statistics.
     std::vector<std::unique_ptr<cache_lru_t>> l2_caches_;     // Per-core private L2s.
