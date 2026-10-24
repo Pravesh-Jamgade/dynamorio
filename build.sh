@@ -4,6 +4,18 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Verify Makefile integrity: detect if in-source cmake overwrote our custom Makefile.
+if grep -q "CMAKE_BINARY_DIR" Makefile 2>/dev/null; then
+    # Print warning message indicating an in-source cmake conflict occurred.
+    echo "[!] Warning: Root Makefile was overwritten by in-source CMake execution."
+    # Inform user that the original simulator Makefile is being restored from Git.
+    echo "[!] Restoring original simulator Makefile from Git..."
+    # Restore the tracked Makefile from Git.
+    git checkout Makefile 2>/dev/null || true
+    # Remove lingering in-source CMakeCache.txt.
+    rm -f CMakeCache.txt
+fi
+
 # Detect number of available CPU cores for parallel compilation.
 NPROC=$(nproc 2>/dev/null || echo 4)
 
