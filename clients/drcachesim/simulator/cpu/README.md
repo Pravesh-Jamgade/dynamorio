@@ -115,3 +115,211 @@ clients/drcachesim/simulator/cpu/
     - `auto`: Heuristic auto-detection based on sequential instruction stride scoring.
   - `-is_cloudsuite`: Convenient boolean shortcut flag indicating CloudSuite 96-byte format.
 - **DynamoRIO Unpacking**: Maps binary records into program-order `TRACE_TYPE_INSTR` fetch events, followed by all valid `TRACE_TYPE_READ` loads and `TRACE_TYPE_WRITE` stores, allowing seamless trace playback directly through `cpu_simulator_t::process_memref()`.
+
+---
+
+## 5. How to Run Complete Core Simulation
+
+### 5.1 Using the Standalone Trace Runner (`bin/run_cpu_sim`)
+
+The fastest way to simulate Google datacenter traces and ChampSim traces directly is using the standalone `run_cpu_sim` driver:
+
+#### Compile the Driver:
+```bash
+mkdir -p bin
+g++ -std=c++14 -O2 -DX86_64 -DLINUX -DARC_64 \
+  -Iclients/drcachesim -Iclients/drcachesim/common -Iclients/drcachesim/reader \
+  -Iclients/drcachesim/simulator -Iclients/drcachesim/tests -Iext/droption \
+  clients/drcachesim/common/trace_entry.cpp \
+  clients/drcachesim/simulator/tlb.cpp \
+  clients/drcachesim/simulator/tlb_simulator.cpp \
+  clients/drcachesim/simulator/simulator.cpp \
+  clients/drcachesim/simulator/caching_device.cpp \
+  clients/drcachesim/simulator/caching_device_stats.cpp \
+  clients/drcachesim/simulator/cache.cpp \
+  clients/drcachesim/simulator/cache_lru.cpp \
+  clients/drcachesim/simulator/cache_fifo.cpp \
+  clients/drcachesim/simulator/cache_stats.cpp \
+  clients/drcachesim/simulator/prefetcher.cpp \
+  clients/drcachesim/simulator/snoop_filter.cpp \
+  clients/drcachesim/simulator/mmu/physical_frame_allocator.cpp \
+  clients/drcachesim/simulator/mmu/huge_page_detector.cpp \
+  clients/drcachesim/simulator/mmu/page_table.cpp \
+  clients/drcachesim/simulator/mmu/page_walk_cache.cpp \
+  clients/drcachesim/simulator/mmu/mmu_stats.cpp \
+  clients/drcachesim/simulator/mmu/page_table_walker.cpp \
+  clients/drcachesim/simulator/mmu/performance_model.cpp \
+  clients/drcachesim/simulator/cpu/three_level_cache.cpp \
+  clients/drcachesim/simulator/cpu/btb.cpp \
+  clients/drcachesim/simulator/cpu/reg_deps.cpp \
+  clients/drcachesim/simulator/cpu/rob.cpp \
+  clients/drcachesim/simulator/cpu/lsq.cpp \
+  clients/drcachesim/simulator/cpu/wrong_path.cpp \
+  clients/drcachesim/simulator/cpu/cpu_core.cpp \
+  clients/drcachesim/simulator/cpu/cpu_simulator.cpp \
+  clients/drcachesim/reader/v2p_reader.cpp \
+  clients/drcachesim/reader/champsim_reader.cpp \
+  clients/drcachesim/simulator/cpu/run_cpu_sim.cpp \
+  -o bin/run_cpu_sim
+```
+
+#### Run a Standard ChampSim Trace (64-byte records):
+```bash
+./bin/run_cpu_sim \
+  --trace /media/pravesh/Storage/ALL_TRACES/bc-0.trace.gz \
+  --format standard \
+  --max_instrs 1000000 \
+  --rob_size 256 \
+  --lq_size 72 \
+  --sq_size 56
+```
+
+#### Run a CloudSuite Trace (96-byte records, 4 stores, ASID):
+```bash
+./bin/run_cpu_sim \
+  --trace /media/pravesh/Storage/ALL_TRACES/nutch_phase0_core1.trace.xz \
+  --format cloudsuite \
+  --max_instrs 1000000 \
+  --cores 1
+```
+
+#### Run with Automatic Trace Detection:
+```bash
+./bin/run_cpu_sim \
+  --trace /media/pravesh/Storage/ALL_TRACES/llama2.c-stories110M.1.champsimtrace.gz \
+  --max_instrs 500000
+```
+
+---
+
+### 5.2 Online Simulation on Live Applications (`drrun`)
+
+To trace and simulate a live Linux binary online using DynamoRIO:
+
+```bash
+# 1. Collect offline trace of application with physical addresses:
+bin64/drrun -t drcachesim -offline -record_replace_retaddr -use_physical \
+  -outdir /tmp/my_trace -- ./my_application arg1 arg2
+
+# 2. Simulate complete OoO CPU core and memory hierarchy:
+bin64/drrun -t drcachesim \
+  -indir /tmp/my_trace/drmemtrace.my_application.*.dir \
+  -v2p_file /tmp/my_trace/drmemtrace.my_application.*.dir/v2p.log \
+  -TLB_enable_ptw true \
+  -TLB_enable_huge_pages true \
+  -TLB_pwc_entries 32 \
+  -TLB_couple_ptw_dcache true \
+  -TLB_enable_performance_model true
+```
+
+---
+
+### 5.3 Programmatic C++ Simulation Driver
+
+You can also embed the complete simulator in any C++ tool or benchmark suite:
+
+```cpp
+#include "cpu/cpu_simulator.h"
+#include "reader/champsim_reader.h"
+#include <iostream>
+
+using namespace dynamorio::drmemtrace;
+
+int main() {
+    // 1. Configure CPU pipeline and cache hierarchy knobs:
+    cpu_simulator_knobs_t knobs;
+    knobs.num_cores = 1;
+    knobs.fetch_width = 4;
+    knobs.commit_width = 4;
+    knobs.rob_capacity = 256;
+    knobs.lq_capacity = 72;
+    knobs.sq_capacity = 56;
+    knobs.enable_wrong_path = true;
+    knobs.branch_mispredict_penalty = 14;
+    knobs.l1i_size = 32 * 1024; // 32 KB private L1I
+    knobs.l1d_size = 32 * 1024; // 32 KB private L1D
+    knobs.l2_size = 256 * 1024; // 256 KB private L2
+    knobs.l3_size = 8 * 1024 * 1024; // 8 MB shared L3
+
+    // 2. Instantiate simulator:
+    cpu_simulator_t sim(knobs);
+
+    // 3. Open trace (auto-detects .gz/.xz compression and 64B/96B layout):
+    champsim_trace_reader_t reader(
+        "/media/pravesh/Storage/ALL_TRACES/nutch_phase0_core1.trace.xz",
+        champsim_trace_format_t::FORMAT_CLOUDSUITE);
+    
+    if (!reader.open()) {
+        std::cerr << "Failed to open trace\n";
+        return 1;
+    }
+
+    // 4. Run 1,000,000 instructions:
+    reader.run_simulation(sim, /*max_instructions=*/1000000, /*print_interval=*/100000);
+
+    // 5. Print comprehensive statistics:
+    sim.print_results();
+    return 0;
+}
+```
+
+---
+
+## 6. Simulation Knobs & Options Reference
+
+| Option | Flag in `run_cpu_sim` | drcachesim Flag | Default | Description |
+|---|---|---|---|---|
+| Trace Path | `--trace <path>` | `-champsim_trace` | `""` | Path to trace file (`.trace`, `.gz`, `.xz`). |
+| Trace Format | `--format <fmt>` | `-champsim_format` | `auto` | `default`, `standard`, `cloudsuite`, or `auto`. |
+| CloudSuite Shortcut | `--is_cloudsuite` | `-is_cloudsuite` | `false` | Force 96-byte CloudSuite record layout. |
+| Max Instructions | `--max_instrs <N>` | `-max_instructions` | `1000000` | Stop simulation after N instructions (0 = all). |
+| Cores | `--cores <N>` | `-num_cores` | `1` | Number of independent CPU cores. |
+| ROB Size | `--rob_size <N>` | `-rob_size` | `256` | Reorder Buffer capacity in entries. |
+| Load Queue Size | `--lq_size <N>` | `-lq_size` | `72` | Load Queue capacity in entries. |
+| Store Queue Size | `--sq_size <N>` | `-sq_size` | `56` | Store Queue capacity in entries. |
+| BTB Size | `--btb_entries <N>` | `-btb_entries` | `4096` | Branch Target Buffer entries. |
+| Mispredict Penalty | `--mispredict_penalty <N>` | `-branch_penalty` | `14` | Flush penalty cycles for branch mispredicts. |
+| Wrong-Path Engine | `--enable_wrong_path <0\|1>`| `-enable_wrong_path` | `1` | Enable speculative wrong-path execution. |
+| Speculative Depth | `--speculative_depth <N>`| `-speculative_depth` | `32` | Maximum wrong-path instructions fetched. |
+| L1I Cache Size | `--l1i_size <bytes>` | `-L1I_size` | `32768` (32KB)| Private L1 Instruction Cache size. |
+| L1D Cache Size | `--l1d_size <bytes>` | `-L1D_size` | `32768` (32KB)| Private L1 Data Cache size. |
+| L2 Cache Size | `--l2_size <bytes>` | `-LL_size` | `262144` (256KB)| Private unified L2 Cache size. |
+| L3 / LLC Size | `--l3_size <bytes>` | `-L3_size` | `8388608` (8MB)| Shared unified Last-Level Cache size. |
+| PWC Entries | `--pwc_entries <N>` | `-TLB_pwc_entries` | `32` | Page Walk Cache entries per core. |
+
+---
+
+## 7. Understanding Simulation Statistics
+
+When simulation finishes, `print_results()` displays a full breakdown across four core dimensions:
+
+```text
+===================================================================
+       OUT-OF-ORDER CPU, MMU & 3-LEVEL CACHE SIMULATION RESULTS     
+===================================================================
+  Core #0 Out-of-Order CPU Pipeline stats:
+    Total instructions fetched:            5000
+    Total instructions retired:            6739
+    Total loads:                           1355
+    Total stores:                           384
+    Branch squash penalty cycles:           798
+    L1I cache miss stall cycles:          15048
+    Total execution cycles:               22637
+    Overall CPI:                         3.3591
+    Overall IPC:                         0.2977
+```
+1. **Total execution cycles & IPC**:
+   - Accurately tracks out-of-order execution overlap, structural stalls, head-of-line commit stalls, L1I fetch stalls, and branch misprediction flushes.
+2. **Branch Predictor & BTB**:
+   - Direction predictions via 2-bit bimodal saturating counters, target predictions via BTB, subroutine call/return pairing via RAS.
+3. **Reorder Buffer (ROB)**:
+   - Tracks dispatch saturation (`ROB full dispatch stalls`), in-order commits, and `Head-of-line commit stalls` (younger ready instructions blocked waiting for an older load to return from cache/memory).
+4. **Load-Store Queue (LSQ)**:
+   - Disambiguates memory operations, buffers speculative stores, and counts `Store-to-Load forwardings` (where load retrieves data from an in-flight store in 1 cycle, bypassing cache and TLB entirely).
+5. **Speculative Wrong-Path Execution**:
+   - Shows instructions fetched along the wrong path upon misprediction, speculative loads/stores issued, and **speculative cache and L1I pollution** (lines brought into cache before the branch was resolved and squashed).
+6. **3-Level Cache Hierarchy**:
+   - Hits, misses, compulsory misses, and local/total miss rates across `L1I`, `L1D`, `L2`, and shared `L3/LLC`.
+7. **MMU, PTW & Page Walk Cache**:
+   - Total 4KB / 2MB / 1GB page table walks, demand page faults, PWC hits/misses, and PTW memory traffic hitting or missing in the data cache hierarchy.
+
