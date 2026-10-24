@@ -120,7 +120,20 @@ clients/drcachesim/simulator/cpu/
 
 ## 5. Usage: Running Traces & Applications through the O3 Engine
 
-Our cycle-level Out-of-Order (O3) engine and unified 3-level cache simulator can be executed in three distinct ways:
+### 5.0 Fast Build Instructions (1 Command)
+
+You can compile the simulator and all unit tests in parallel in under 3 seconds:
+
+```bash
+# Build both bin/run_cpu_sim and bin/unit_tests:
+./build.sh         # (or: make -j$(nproc))
+
+# Run the full unit test suite (13 tests):
+./build.sh test    # (or: make test)
+
+# Clean build artifacts:
+./build.sh clean   # (or: make clean)
+```
 
 ---
 
