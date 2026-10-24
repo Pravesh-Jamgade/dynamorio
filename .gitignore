@@ -7,6 +7,7 @@
 .vs
 .vscode
 build
+build_sim/
 bin/
 bin64/
 CMakeLists.txt.user
