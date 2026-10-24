@@ -566,6 +566,11 @@ droption_t<unsigned int> op_TLB_dram_latency(
     "Latency in cycles for main memory DRAM access",
     "Specifies the latency in processor clock cycles for an uncached memory or PTE read.");
 
+droption_t<std::string> op_cpu_config(
+    DROPTION_SCOPE_FRONTEND, "cpu_config", "",
+    "Path to INI configuration file for O3 CPU simulator",
+    "Specifies an INI configuration file defining O3 microarchitectural parameters.");
+
 droption_t<std::string>
     op_tool(DROPTION_SCOPE_FRONTEND,
             std::vector<std::string>({ "tool", "simulator_type" }), CPU_CACHE,

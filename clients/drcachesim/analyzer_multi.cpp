@@ -55,6 +55,7 @@
 #include "simulator/cache_simulator_create.h"
 #include "simulator/tlb_simulator_create.h"
 #include "simulator/cpu/cpu_simulator_create.h"
+#include "simulator/cpu/ini_parser.h"
 #include "tools/basic_counts_create.h"
 #include "tools/filter/record_filter_create.h"
 #include "tools/func_view_create.h"
@@ -237,28 +238,53 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
     } else if (tool == CPU_SIMULATOR || tool == CPU_SIMULATOR_ALT) {
         // Instantiate configuration knobs for complete out-of-order CPU core simulation.
         cpu_simulator_knobs_t knobs;
-        // Set number of CPU cores.
-        knobs.num_cores = op_num_cores.get_value();
-        // Set cache block line size in bytes.
-        knobs.line_size = op_line_size.get_value();
-        // Set private L1I size.
-        knobs.l1i_size = op_L1I_size.get_value();
-        // Set private L1I associativity.
-        knobs.l1i_assoc = op_L1I_assoc.get_value();
-        // Set private L1D size.
-        knobs.l1d_size = op_L1D_size.get_value();
-        // Set private L1D associativity.
-        knobs.l1d_assoc = op_L1D_assoc.get_value();
-        // Set private unified L2 size.
-        knobs.l2_size = op_LL_size.get_value();
-        // Set private unified L2 associativity.
-        knobs.l2_assoc = op_LL_assoc.get_value();
-        // Set Page Walk Cache entries per core.
-        knobs.pwc_entries = op_TLB_pwc_entries.get_value();
-        // Set Page Walk Cache associativity.
-        knobs.pwc_assoc = op_TLB_pwc_assoc.get_value();
-        // Set base page size.
-        knobs.page_size = op_page_size.get_value();
+        // Check if an INI configuration file was specified.
+        if (!op_cpu_config.get_value().empty()) {
+            // Instantiate INI configuration parser.
+            ini_config_t ini_parser;
+            // Attempt to load and parse the INI file.
+            if (ini_parser.load(op_cpu_config.get_value())) {
+                // Apply INI settings to knobs.
+                ini_parser.apply_to_knobs(knobs);
+            } else {
+                // Print warning on failure to load INI file.
+                ERRMSG("Warning: Failed to load CPU config file: %s\n", op_cpu_config.get_value().c_str());
+            }
+        }
+        // Command-line flags can selectively override individual parameters if explicitly specified.
+        if (op_num_cores.specified()) {
+            knobs.num_cores = op_num_cores.get_value();
+        }
+        if (op_line_size.specified()) {
+            knobs.line_size = op_line_size.get_value();
+        }
+        if (op_L1I_size.specified()) {
+            knobs.l1i_size = op_L1I_size.get_value();
+        }
+        if (op_L1I_assoc.specified()) {
+            knobs.l1i_assoc = op_L1I_assoc.get_value();
+        }
+        if (op_L1D_size.specified()) {
+            knobs.l1d_size = op_L1D_size.get_value();
+        }
+        if (op_L1D_assoc.specified()) {
+            knobs.l1d_assoc = op_L1D_assoc.get_value();
+        }
+        if (op_LL_size.specified()) {
+            knobs.l2_size = op_LL_size.get_value();
+        }
+        if (op_LL_assoc.specified()) {
+            knobs.l2_assoc = op_LL_assoc.get_value();
+        }
+        if (op_TLB_pwc_entries.specified()) {
+            knobs.pwc_entries = op_TLB_pwc_entries.get_value();
+        }
+        if (op_TLB_pwc_assoc.specified()) {
+            knobs.pwc_assoc = op_TLB_pwc_assoc.get_value();
+        }
+        if (op_page_size.specified()) {
+            knobs.page_size = op_page_size.get_value();
+        }
         // Create and return the OoO CPU, MMU, and 3-level cache simulator tool instance.
         return cpu_simulator_create(knobs);
     } else if (tool == HISTOGRAM) {
