@@ -47,6 +47,8 @@
 
 // Include CPU simulator knobs and tool class.
 #include "cpu/cpu_simulator.h"
+// Include INI configuration file parser.
+#include "cpu/ini_parser.h"
 // Include ChampSim trace reader adapter.
 #include "reader/champsim_reader.h"
 
@@ -65,6 +67,10 @@ print_usage(const char *prog_name)
     std::cout << "=======================================================================\n";
     // Print usage syntax.
     std::cout << "Usage: " << prog_name << " [options]\n\n";
+    // Print configuration options section.
+    std::cout << "Configuration Options:\n";
+    // Print config option explanation.
+    std::cout << "  --config, -c <file.ini>  Load pipeline and cache parameters from INI file\n\n";
     // Print trace options section.
     std::cout << "Trace Options:\n";
     // Print trace option explanation.
@@ -156,6 +162,22 @@ main(int argc, char **argv)
             print_usage(argv[0]);
             // Exit program cleanly.
             return 0;
+        }
+        // Check for INI configuration file path option.
+        else if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
+            // Retrieve configuration file path.
+            std::string config_file = argv[++i];
+            // Instantiate INI configuration parser.
+            ini_config_t ini_parser;
+            // Attempt to load and parse the INI file.
+            if (!ini_parser.load(config_file)) {
+                // Report error loading INI file.
+                std::cerr << "Error: Failed to load INI configuration file '" << config_file << "'\n";
+                // Return failure code.
+                return 1;
+            }
+            // Apply parsed configuration parameters to simulator knobs.
+            ini_parser.apply_to_knobs(knobs);
         }
         // Check for trace file path option.
         else if (arg == "--trace" && i + 1 < argc) {
@@ -267,6 +289,31 @@ main(int argc, char **argv)
             // Parse PWC entries.
             knobs.pwc_entries = std::strtoul(argv[++i], nullptr, 0);
         }
+        // Check for L1I MSHR capacity option.
+        else if (arg == "--l1i_mshr" && i + 1 < argc) {
+            // Parse L1I MSHR capacity.
+            knobs.l1i_mshr_capacity = std::strtoul(argv[++i], nullptr, 0);
+        }
+        // Check for L1D MSHR capacity option.
+        else if (arg == "--l1d_mshr" && i + 1 < argc) {
+            // Parse L1D MSHR capacity.
+            knobs.l1d_mshr_capacity = std::strtoul(argv[++i], nullptr, 0);
+        }
+        // Check for L2 MSHR capacity option.
+        else if (arg == "--l2_mshr" && i + 1 < argc) {
+            // Parse L2 MSHR capacity.
+            knobs.l2_mshr_capacity = std::strtoul(argv[++i], nullptr, 0);
+        }
+        // Check for L3 MSHR capacity option.
+        else if (arg == "--l3_mshr" && i + 1 < argc) {
+            // Parse L3 MSHR capacity.
+            knobs.l3_mshr_capacity = std::strtoul(argv[++i], nullptr, 0);
+        }
+        // Check for DRAM latency option.
+        else if (arg == "--dram_latency" && i + 1 < argc) {
+            // Parse DRAM latency.
+            knobs.dram_latency = std::strtoull(argv[++i], nullptr, 0);
+        }
         // Positional argument without prefix treated as trace path.
         else if (arg[0] != '-' && trace_path.empty()) {
             // Assign positional argument to trace path.
@@ -334,6 +381,9 @@ main(int argc, char **argv)
     // Print Cache sizes.
     std::cout << "  Hierarchy:    L1I=" << (knobs.l1i_size / 1024) << "KB, L1D=" << (knobs.l1d_size / 1024)
               << "KB, L2=" << (knobs.l2_size / 1024) << "KB, L3=" << (knobs.l3_size / (1024 * 1024)) << "MB\n";
+    // Print MSHR capacities.
+    std::cout << "  MSHRs:        L1I=" << knobs.l1i_mshr_capacity << ", L1D=" << knobs.l1d_mshr_capacity
+              << ", L2=" << knobs.l2_mshr_capacity << ", L3=" << knobs.l3_mshr_capacity << "\n";
     // Print max instructions.
     std::cout << "  Target:       " << (max_instrs == 0 ? "Entire trace" : std::to_string(max_instrs) + " instructions") << "\n";
     // Print banner divider.

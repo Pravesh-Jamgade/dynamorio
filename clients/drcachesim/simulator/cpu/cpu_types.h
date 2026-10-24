@@ -60,6 +60,8 @@ enum class cpu_op_type_t {
     OP_ALU,            // Arithmetic, logic, shift, or general integer register op.
     OP_LOAD,           // Memory read operation.
     OP_STORE,          // Memory write operation.
+    OP_FETCH,          // Instruction cache line fetch.
+    OP_PREFETCH,       // Hardware prefetch access.
     OP_BRANCH_COND,    // Conditional branch (requires direction and target prediction).
     OP_BRANCH_UNCOND,  // Unconditional direct branch or jump.
     OP_CALL,           // Function call instruction (pushes return address).

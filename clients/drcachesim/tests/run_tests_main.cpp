@@ -50,12 +50,12 @@ int main(int argc, char **argv) {
     std::cout << "  RUNNING FULL MMU, 3-LEVEL CACHE & O3 CPU UNIT TESTS\n";
     // Print separator.
     std::cout << "=======================================================\n\n";
-    // Execute all 13 unit tests.
+    // Execute all 14 unit tests.
     dynamorio::drmemtrace::unit_test_tlb_simulator(testdir);
     // Print confirmation of successful completion.
     std::cout << "\n=======================================================\n";
     // Print success summary.
-    std::cout << "  >>> ALL 13 TEST SUITES PASSED CLEANLY! <<<\n";
+    std::cout << "  >>> ALL 14 TEST SUITES PASSED CLEANLY! <<<\n";
     // Print separator.
     std::cout << "=======================================================\n\n";
     // Return success code.

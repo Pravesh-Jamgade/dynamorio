@@ -94,6 +94,22 @@ struct cpu_simulator_knobs_t {
         , pwc_entries(32)                       // 32-entry Page Walk Cache per core.
         , pwc_assoc(4)                          // 4-way PWC.
         , page_size(4096)                       // 4 KB base page size.
+        , l1i_mshr_capacity(16)                 // 16 MSHRs for L1I.
+        , l1i_rq_capacity(32)                   // 32 Read Queue entries for L1I.
+        , l1i_pq_capacity(32)                   // 32 Prefetch Queue entries for L1I.
+        , l1d_mshr_capacity(16)                 // 16 MSHRs for L1D.
+        , l1d_rq_capacity(32)                   // 32 Read Queue entries for L1D.
+        , l1d_wq_capacity(32)                   // 32 Write Queue entries for L1D.
+        , l1d_pq_capacity(32)                   // 32 Prefetch Queue entries for L1D.
+        , l2_mshr_capacity(32)                  // 32 MSHRs for unified L2.
+        , l2_rq_capacity(48)                    // 48 Read Queue entries for L2.
+        , l2_wq_capacity(48)                    // 48 Write Queue entries for L2.
+        , l2_pq_capacity(32)                    // 32 Prefetch Queue entries for L2.
+        , l3_mshr_capacity(64)                  // 64 MSHRs for shared L3/LLC.
+        , l3_rq_capacity(64)                    // 64 Read Queue entries for L3.
+        , l3_wq_capacity(64)                    // 64 Write Queue entries for L3.
+        , l3_pq_capacity(64)                    // 64 Prefetch Queue entries for L3.
+        , dram_latency(150)                     // 150-cycle main memory DRAM latency.
     {
     }
 
@@ -123,6 +139,22 @@ struct cpu_simulator_knobs_t {
     unsigned int pwc_entries;                   // PWC entries.
     unsigned int pwc_assoc;                     // PWC associativity.
     uint64_t page_size;                         // Base page size.
+    size_t l1i_mshr_capacity;                   // L1I MSHR size.
+    size_t l1i_rq_capacity;                     // L1I Read Queue size.
+    size_t l1i_pq_capacity;                     // L1I Prefetch Queue size.
+    size_t l1d_mshr_capacity;                   // L1D MSHR size.
+    size_t l1d_rq_capacity;                     // L1D Read Queue size.
+    size_t l1d_wq_capacity;                     // L1D Write Queue size.
+    size_t l1d_pq_capacity;                     // L1D Prefetch Queue size.
+    size_t l2_mshr_capacity;                    // L2 MSHR size.
+    size_t l2_rq_capacity;                      // L2 Read Queue size.
+    size_t l2_wq_capacity;                      // L2 Write Queue size.
+    size_t l2_pq_capacity;                      // L2 Prefetch Queue size.
+    size_t l3_mshr_capacity;                    // L3 MSHR size.
+    size_t l3_rq_capacity;                      // L3 Read Queue size.
+    size_t l3_wq_capacity;                      // L3 Write Queue size.
+    size_t l3_pq_capacity;                      // L3 Prefetch Queue size.
+    uint64_t dram_latency;                      // DRAM access latency in cycles.
 };
 
 /**

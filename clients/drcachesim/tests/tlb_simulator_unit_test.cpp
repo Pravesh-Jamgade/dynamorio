@@ -59,6 +59,12 @@
 #include "../simulator/cpu/wrong_path.h"
 // ChampSim and CloudSuite trace reader adapter.
 #include "../reader/champsim_reader.h"
+// Miss Status Holding Register (MSHR) table.
+#include "../simulator/cpu/mshr.h"
+// Cache Read, Write, and Prefetch queues.
+#include "../simulator/cpu/cache_queues.h"
+// INI configuration parser.
+#include "../simulator/cpu/ini_parser.h"
 // Complete Out-of-Order CPU and 3-level cache simulator.
 #include "../simulator/cpu/cpu_simulator.h"
 // Memory reference structure definition.
@@ -1250,6 +1256,244 @@ unit_test_champsim_and_cloudsuite_reader()
     }
 }
 
+// Test 14: Miss Status Holding Registers (MSHR), Cache Queues (RQ/WQ/PQ), and Nested INI Parser.
+static void
+unit_test_mshr_queues_and_nested_ini()
+{
+    // 1. Test MSHR Table: allocation, line matching, secondary coalescing, and capacity stalls.
+    mshr_table_t mshr(2, 64);
+    // Verify initial capacity is 2.
+    assert(mshr.capacity() == 2);
+    // Verify initial occupancy is 0.
+    assert(mshr.occupancy() == 0);
+    // Verify MSHR is not full.
+    assert(!mshr.is_full());
+    // Allocate first entry for cache line 0x1000 with 10 cycle fill latency.
+    mshr_entry_t *e1 = mshr.allocate(0x1000, 0, 10, cpu_op_type_t::OP_LOAD, 101);
+    // Verify allocation returned non-null pointer.
+    assert(e1 != nullptr);
+    // Verify occupancy incremented to 1.
+    assert(mshr.occupancy() == 1);
+    // Verify MSHR is not yet full.
+    assert(!mshr.is_full());
+    // Lookup with different byte offset in same 64-byte line (0x1028).
+    mshr_entry_t *found1 = mshr.lookup(0x1028);
+    // Verify lookup matches allocated entry.
+    assert(found1 == e1);
+    // Coalesce secondary miss to line 0x1000.
+    mshr.coalesce_secondary(found1, 102);
+    // Verify statistics recorded secondary merge.
+    assert(mshr.get_stats().secondary_merges == 1);
+    // Verify secondary ID recorded in entry.
+    assert(found1->secondary_ids.size() == 1);
+    // Verify sequence ID matches.
+    assert(found1->secondary_ids[0] == 102);
+
+    // Allocate second entry for line 0x2000 with 15 cycle latency.
+    mshr_entry_t *e2 = mshr.allocate(0x2000, 0, 15, cpu_op_type_t::OP_LOAD, 103);
+    // Verify allocation returned valid pointer.
+    assert(e2 != nullptr);
+    // Verify occupancy reached capacity (2).
+    assert(mshr.occupancy() == 2);
+    // Verify table reports full.
+    assert(mshr.is_full());
+    // Verify structural stall calculation reports positive delay.
+    assert(mshr.get_cycles_until_next_available(0) > 0);
+    // Advance simulation time to cycle 5: neither entry is ready yet.
+    mshr.retire_completed_fills(5);
+    // Verify occupancy remains 2.
+    assert(mshr.occupancy() == 2);
+    // Advance to cycle 10: e1 (ready at cycle 10) must retire!
+    mshr.retire_completed_fills(10);
+    // Verify occupancy dropped to 1.
+    assert(mshr.occupancy() == 1);
+    // Verify table is no longer full.
+    assert(!mshr.is_full());
+    // Verify line 0x1000 is no longer in MSHR.
+    assert(mshr.lookup(0x1000) == nullptr);
+    // Verify line 0x2000 is still active.
+    assert(mshr.lookup(0x2000) == e2);
+
+    // 2. Test Cache Queues: Read Queue (RQ), Write Queue (WQ), Prefetch Queue (PQ).
+    // Test Read Queue FIFO behavior.
+    read_queue_t rq(2, 64);
+    // Verify Read Queue capacity.
+    assert(rq.capacity() == 2);
+    // Verify Read Queue initial size.
+    assert(rq.size() == 0);
+    // Prepare first read request.
+    cache_queue_entry_t r1 = {};
+    // Set target address.
+    r1.addr = 0x4000;
+    // Set operation type to load.
+    r1.op_type = cpu_op_type_t::OP_LOAD;
+    // Enqueue first read request.
+    assert(rq.enqueue(r1, 1));
+    // Verify size is 1.
+    assert(rq.size() == 1);
+    // Prepare second read request.
+    cache_queue_entry_t r2 = {};
+    // Set target address.
+    r2.addr = 0x5000;
+    // Set operation type to load.
+    r2.op_type = cpu_op_type_t::OP_LOAD;
+    // Enqueue second read request.
+    assert(rq.enqueue(r2, 2));
+    // Verify queue is now full.
+    assert(rq.is_full());
+    // Third enqueue must fail due to capacity.
+    cache_queue_entry_t r3 = {};
+    // Set target address.
+    r3.addr = 0x6000;
+    // Attempt enqueue on full queue.
+    assert(!rq.enqueue(r3, 3));
+    // Dequeue first request.
+    cache_queue_entry_t deq_r;
+    // Verify dequeue succeeds.
+    assert(rq.dequeue(deq_r));
+    // Verify FIFO ordering: first dequeued address is 0x4000.
+    assert(deq_r.addr == 0x4000);
+    // Dequeue second request.
+    assert(rq.dequeue(deq_r));
+    // Verify second dequeued address is 0x5000.
+    assert(deq_r.addr == 0x5000);
+    // Verify queue is now empty.
+    assert(rq.is_empty());
+
+    // Test Write Queue RAW hazard detection and write-coalescing.
+    write_queue_t wq(4, 64);
+    // Prepare first store request.
+    cache_queue_entry_t w1 = {};
+    // Set address.
+    w1.addr = 0x7000;
+    // Set size to 8 bytes.
+    w1.size = 8;
+    // Set operation type to store.
+    w1.op_type = cpu_op_type_t::OP_STORE;
+    // Enqueue store into write queue.
+    assert(wq.enqueue(w1, 1));
+    // Verify write queue size is 1.
+    assert(wq.size() == 1);
+    // Verify RAW hazard detection for exact byte address.
+    assert(wq.has_raw_hazard(0x7000));
+    // Verify RAW hazard detection for offset within 8-byte range.
+    assert(wq.has_raw_hazard(0x7004));
+    // Verify non-conflicting address has no RAW hazard.
+    assert(!wq.has_raw_hazard(0x8000));
+    // Test write-coalescing: store to 0x7020 is within the same 64-byte line (0x7000-0x703F).
+    cache_queue_entry_t w2 = {};
+    // Set offset address.
+    w2.addr = 0x7020;
+    // Set size.
+    w2.size = 8;
+    // Set operation type to store.
+    w2.op_type = cpu_op_type_t::OP_STORE;
+    // Enqueue second store to same cache line.
+    assert(wq.enqueue(w2, 2));
+    // Verify queue size did not increase due to write-coalescing!
+    assert(wq.size() == 1);
+    // Verify coalesced writes counter incremented.
+    assert(wq.coalesced_writes() == 1);
+
+    // Test Prefetch Queue (PQ): drops silently when full.
+    prefetch_queue_t pq(1, 64);
+    // Prepare first prefetch request.
+    cache_queue_entry_t p1 = {};
+    // Set address.
+    p1.addr = 0x9000;
+    // Set operation type to prefetch.
+    p1.op_type = cpu_op_type_t::OP_PREFETCH;
+    // Enqueue first prefetch.
+    assert(pq.enqueue(p1, 1));
+    // Verify queue is now full.
+    assert(pq.is_full());
+    // Prepare second prefetch request.
+    cache_queue_entry_t p2 = {};
+    // Set address.
+    p2.addr = 0x9040;
+    // Set operation type to prefetch.
+    p2.op_type = cpu_op_type_t::OP_PREFETCH;
+    // Overfilling prefetch queue must drop cleanly without error.
+    assert(!pq.enqueue(p2, 2));
+    // Verify dropped counter incremented.
+    assert(pq.dropped_prefetches() == 1);
+
+    // 3. Test INI Configuration Parser and Nested Overwrite.
+    std::string parent_ini = "/tmp/unit_test_parent.ini";
+    // Define child INI path.
+    std::string child_ini = "/tmp/unit_test_child.ini";
+    // Open parent INI file stream for writing.
+    std::ofstream pf(parent_ini.c_str());
+    // Write CPU section.
+    pf << "[cpu]\n";
+    // Write num_cores setting.
+    pf << "num_cores = 1\n";
+    // Write rob_capacity setting.
+    pf << "rob_capacity = 256\n";
+    // Write lq_capacity setting.
+    pf << "lq_capacity = 72\n";
+    // Write L1D cache section.
+    pf << "[l1d]\n";
+    // Write size setting with byte multiplier.
+    pf << "size = 32KB\n";
+    // Write mshr_capacity setting.
+    pf << "mshr_capacity = 16\n";
+    // Close parent file.
+    pf.close();
+
+    // Open child INI file stream for writing.
+    std::ofstream cf(child_ini.c_str());
+    // Write include directive pointing to parent INI file.
+    cf << "include = /tmp/unit_test_parent.ini\n";
+    // Write CPU section.
+    cf << "[cpu]\n";
+    // Overwrite parent ROB capacity setting from 256 to 512!
+    cf << "rob_capacity = 512\n";
+    // Write L1D cache section.
+    cf << "[l1d]\n";
+    // Overwrite parent MSHR capacity setting from 16 to 32!
+    cf << "mshr_capacity = 32\n";
+    // Close child file.
+    cf.close();
+
+    // Instantiate INI configuration parser.
+    ini_config_t config;
+    // Load and resolve child INI with nested include.
+    assert(config.load(child_ini));
+
+    // Verify parsed values in configuration map.
+    // Verify num_cores inherited from parent.
+    assert(config.get_uint64("cpu", "num_cores") == 1);
+    // Verify lq_capacity inherited from parent.
+    assert(config.get_uint64("cpu", "lq_capacity") == 72);
+    // Verify rob_capacity overwritten by child to 512!
+    assert(config.get_uint64("cpu", "rob_capacity") == 512);
+    // Verify mshr_capacity overwritten by child to 32!
+    assert(config.get_uint64("l1d", "mshr_capacity") == 32);
+    // Verify 32KB byte size parsed correctly to 32768.
+    assert(config.get_bytesize("l1d", "size") == 32768);
+
+    // Apply configuration to simulator knobs.
+    cpu_simulator_knobs_t knobs;
+    // Apply parsed values.
+    config.apply_to_knobs(knobs);
+    // Verify knobs num_cores matches 1.
+    assert(knobs.num_cores == 1);
+    // Verify knobs rob_capacity matches overwritten 512.
+    assert(knobs.rob_capacity == 512);
+    // Verify knobs lq_capacity matches inherited 72.
+    assert(knobs.lq_capacity == 72);
+    // Verify knobs l1d_size matches 32768.
+    assert(knobs.l1d_size == 32768);
+    // Verify knobs l1d_mshr_capacity matches overwritten 32.
+    assert(knobs.l1d_mshr_capacity == 32);
+
+    // Clean up temporary parent file.
+    remove(parent_ini.c_str());
+    // Clean up temporary child file.
+    remove(child_ini.c_str());
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1282,6 +1526,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_wrong_path_speculation();
     // Run ChampSim Standard (64-byte) and CloudSuite (96-byte) Trace Reader unit test.
     unit_test_champsim_and_cloudsuite_reader();
+    // Run MSHR, Cache Queues, and Nested INI Parser unit test.
+    unit_test_mshr_queues_and_nested_ini();
 }
 
 } // namespace drmemtrace

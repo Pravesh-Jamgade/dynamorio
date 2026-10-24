@@ -51,6 +51,12 @@ flowchart TD
 ```text
 clients/drcachesim/simulator/cpu/
 ├── cpu_types.h          # cpu_op_type_t, pipeline_stage_t, branch_prediction_t, dyn_instruction_t
+├── mshr.h               # Miss Status Holding Register (MSHR) table declarations
+├── mshr.cpp             # In-flight line fills, secondary miss coalescing, structural full stalls
+├── cache_queues.h       # Read Queue (RQ), Write Queue (WQ), Prefetch Queue (PQ) declarations
+├── cache_queues.cpp     # RAW hazard detection, line write-coalescing, prefetch dropping
+├── ini_parser.h         # Hierarchical INI parser declarations and nested include resolution
+├── ini_parser.cpp       # INI lexing, byte unit multipliers, and recursive include overwriting
 ├── three_level_cache.h  # 3-level data cache hierarchy declaration (L1D -> L2 -> L3/LLC)
 ├── three_level_cache.cpp# Cascading cache lookups, PTW PTE routing, and access latency evaluation
 ├── btb.h                # btb_t, return_address_stack_t, and branch_predictor_t declarations
@@ -115,6 +121,25 @@ clients/drcachesim/simulator/cpu/
     - `auto`: Heuristic auto-detection based on sequential instruction stride scoring.
   - `-is_cloudsuite`: Convenient boolean shortcut flag indicating CloudSuite 96-byte format.
 - **DynamoRIO Unpacking**: Maps binary records into program-order `TRACE_TYPE_INSTR` fetch events, followed by all valid `TRACE_TYPE_READ` loads and `TRACE_TYPE_WRITE` stores, allowing seamless trace playback directly through `cpu_simulator_t::process_memref()`.
+
+### 4.6 Miss Status Holding Registers (MSHR) & Cache Queues
+- **Non-blocking Cache Modeling (`mshr_table_t`)**:
+  - Implemented across all cache levels (`L1I`, `L1D`, `L2`, `L3/LLC`).
+  - **Primary Miss Allocation**: When a miss occurs, an MSHR slot is allocated, tracking the 64-byte line base address and calculated line fill ready cycle (`current_cycle + latency`).
+  - **Secondary Miss Coalescing**: Subsequent misses to an already in-flight cache line coalesce onto the active MSHR entry rather than issuing redundant lower-level requests. Latency is absorbed (1 cycle).
+  - **Structural Stalls**: When all MSHR slots are occupied (`mshr_table_t::is_full()`), the pipeline incurs full structural stall cycles until the oldest in-flight line fill completes and retires.
+- **Cache Queues (`cache_queues_t`)**:
+  - **Read Queue (RQ)**: Buffers incoming demand loads, instruction fetches, and PTW memory reads.
+  - **Write Queue (WQ)**: Buffers committed store writes with **write-coalescing** on identical 64-byte cache lines. Features **RAW hazard detection**: matching loads forward data directly from the WQ in 1 cycle!
+  - **Prefetch Queue (PQ)**: Buffers hardware prefetch accesses and drops requests silently when full without stalling the core.
+
+### 4.7 INI Configuration Parser & Nested Overwrite System (`ini_config_t`)
+- **Hierarchical INI Profiles**: Configures pipeline widths, ROB/LQ/SQ sizes, branch misprediction penalties, MSHR capacities, queue depths, and cache dimensions.
+- **Nested File Inclusion (`include = base.ini`)**: Child INI files inherit all baseline parameters and overwrite specific settings. Supports recursive nesting and circular include detection.
+- **Human-Readable Multipliers**: Accepts byte size strings such as `32KB`, `256KB`, `8MB`, `1GB`.
+- **CLI and Scripts**:
+  - Direct execution: `./bin/run_cpu_sim --config configs/o3_server.ini --trace <path>`
+  - Automated wrapper: `./build_from_config.sh --config configs/o3_server.ini --trace <path>`
 
 ---
 

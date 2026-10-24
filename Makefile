@@ -5,7 +5,7 @@
 CXX ?= g++
 
 # Compiler optimization and diagnostic flags.
-CXXFLAGS ?= -std=c++14 -O3 -Wall -Wextra -Werror -Wno-unused-parameter -DX86_64 -DLINUX -DARC_64
+CXXFLAGS ?= -std=c++14 -O3 -Wall -Wextra -Werror -Wno-unused-parameter -DX86_64 -DLINUX -DARC_64 -MMD -MP
 
 # Header search directories.
 INCLUDES := -Iclients/drcachesim \
@@ -42,6 +42,9 @@ SIM_SRCS := \
     clients/drcachesim/simulator/mmu/mmu_stats.cpp \
     clients/drcachesim/simulator/mmu/page_table_walker.cpp \
     clients/drcachesim/simulator/mmu/performance_model.cpp \
+    clients/drcachesim/simulator/cpu/mshr.cpp \
+    clients/drcachesim/simulator/cpu/cache_queues.cpp \
+    clients/drcachesim/simulator/cpu/ini_parser.cpp \
     clients/drcachesim/simulator/cpu/three_level_cache.cpp \
     clients/drcachesim/simulator/cpu/btb.cpp \
     clients/drcachesim/simulator/cpu/reg_deps.cpp \
@@ -102,6 +105,9 @@ $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	@echo "[Compiling] $<"
 	@$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Include compiler-generated header dependency rules (.d files).
+-include $(SIM_OBJS:.o=.d) $(RUN_CPU_SIM_OBJ:.o=.d) $(TEST_OBJS:.o=.d)
 
 # Target to remove all generated object files and binaries.
 clean:

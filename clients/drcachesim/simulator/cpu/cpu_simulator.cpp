@@ -63,6 +63,22 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
     c_knobs.l2_assoc = knobs_.l2_assoc;
     c_knobs.l3_size = knobs_.l3_size;
     c_knobs.l3_assoc = knobs_.l3_assoc;
+    c_knobs.l1i_mshr_capacity = knobs_.l1i_mshr_capacity;
+    c_knobs.l1i_rq_capacity = knobs_.l1i_rq_capacity;
+    c_knobs.l1i_pq_capacity = knobs_.l1i_pq_capacity;
+    c_knobs.l1d_mshr_capacity = knobs_.l1d_mshr_capacity;
+    c_knobs.l1d_rq_capacity = knobs_.l1d_rq_capacity;
+    c_knobs.l1d_wq_capacity = knobs_.l1d_wq_capacity;
+    c_knobs.l1d_pq_capacity = knobs_.l1d_pq_capacity;
+    c_knobs.l2_mshr_capacity = knobs_.l2_mshr_capacity;
+    c_knobs.l2_rq_capacity = knobs_.l2_rq_capacity;
+    c_knobs.l2_wq_capacity = knobs_.l2_wq_capacity;
+    c_knobs.l2_pq_capacity = knobs_.l2_pq_capacity;
+    c_knobs.l3_mshr_capacity = knobs_.l3_mshr_capacity;
+    c_knobs.l3_rq_capacity = knobs_.l3_rq_capacity;
+    c_knobs.l3_wq_capacity = knobs_.l3_wq_capacity;
+    c_knobs.l3_pq_capacity = knobs_.l3_pq_capacity;
+    c_knobs.dram_latency = knobs_.dram_latency;
     cache_hierarchy_.reset(new three_level_cache_t(c_knobs));
 
     // Resize per-core vectors.

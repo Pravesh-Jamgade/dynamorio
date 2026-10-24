@@ -51,6 +51,10 @@
 #include "cache_lru.h"
 // Provide cache_stats_t definitions.
 #include "cache_stats.h"
+// Provide Miss Status Holding Register (MSHR) table definition.
+#include "cpu/mshr.h"
+// Provide Read, Write, and Prefetch queues definition.
+#include "cpu/cache_queues.h"
 // Provide memref_t definition.
 #include "memref.h"
 
@@ -91,6 +95,21 @@ struct three_level_cache_knobs_t {
         , l2_latency(12)                 // Default 12-cycle L2 hit latency.
         , l3_latency(35)                 // Default 35-cycle L3 hit latency.
         , dram_latency(150)              // Default 150-cycle main memory DRAM latency.
+        , l1i_mshr_capacity(16)          // Default 16 MSHR entries for L1I.
+        , l1i_rq_capacity(32)            // Default 32 Read Queue entries for L1I.
+        , l1i_pq_capacity(32)            // Default 32 Prefetch Queue entries for L1I.
+        , l1d_mshr_capacity(16)          // Default 16 MSHR entries for L1D.
+        , l1d_rq_capacity(32)            // Default 32 Read Queue entries for L1D.
+        , l1d_wq_capacity(32)            // Default 32 Write Queue entries for L1D.
+        , l1d_pq_capacity(32)            // Default 32 Prefetch Queue entries for L1D.
+        , l2_mshr_capacity(32)           // Default 32 MSHR entries for unified L2.
+        , l2_rq_capacity(48)             // Default 48 Read Queue entries for L2.
+        , l2_wq_capacity(48)             // Default 48 Write Queue entries for L2.
+        , l2_pq_capacity(32)             // Default 32 Prefetch Queue entries for L2.
+        , l3_mshr_capacity(64)           // Default 64 MSHR entries for shared L3/LLC.
+        , l3_rq_capacity(64)             // Default 64 Read Queue entries for L3.
+        , l3_wq_capacity(64)             // Default 64 Write Queue entries for L3.
+        , l3_pq_capacity(64)             // Default 64 Prefetch Queue entries for L3.
     {
     }
 
@@ -109,6 +128,21 @@ struct three_level_cache_knobs_t {
     uint64_t l2_latency;                 // Hit latency in cycles for L2.
     uint64_t l3_latency;                 // Hit latency in cycles for L3.
     uint64_t dram_latency;               // Access latency in cycles for main memory DRAM.
+    size_t l1i_mshr_capacity;            // MSHR capacity for L1I.
+    size_t l1i_rq_capacity;              // Read Queue capacity for L1I.
+    size_t l1i_pq_capacity;              // Prefetch Queue capacity for L1I.
+    size_t l1d_mshr_capacity;            // MSHR capacity for L1D.
+    size_t l1d_rq_capacity;              // Read Queue capacity for L1D.
+    size_t l1d_wq_capacity;              // Write Queue capacity for L1D.
+    size_t l1d_pq_capacity;              // Prefetch Queue capacity for L1D.
+    size_t l2_mshr_capacity;             // MSHR capacity for L2.
+    size_t l2_rq_capacity;               // Read Queue capacity for L2.
+    size_t l2_wq_capacity;               // Write Queue capacity for L2.
+    size_t l2_pq_capacity;               // Prefetch Queue capacity for L2.
+    size_t l3_mshr_capacity;             // MSHR capacity for L3.
+    size_t l3_rq_capacity;               // Read Queue capacity for L3.
+    size_t l3_wq_capacity;               // Write Queue capacity for L3.
+    size_t l3_pq_capacity;               // Prefetch Queue capacity for L3.
 };
 
 /**
@@ -195,6 +229,40 @@ public:
     caching_device_t *
     get_l3_cache() const;
 
+    // MSHR and Queue accessors.
+    mshr_table_t *get_l1i_mshr(unsigned int core) const;
+    mshr_table_t *get_l1d_mshr(unsigned int core) const;
+    mshr_table_t *get_l2_mshr(unsigned int core) const;
+    mshr_table_t *get_l3_mshr() const;
+
+    read_queue_t *get_l1i_rq(unsigned int core) const;
+    read_queue_t *get_l1d_rq(unsigned int core) const;
+    write_queue_t *get_l1d_wq(unsigned int core) const;
+    prefetch_queue_t *get_l1i_pq(unsigned int core) const;
+    prefetch_queue_t *get_l1d_pq(unsigned int core) const;
+    read_queue_t *get_l2_rq(unsigned int core) const;
+    write_queue_t *get_l2_wq(unsigned int core) const;
+    prefetch_queue_t *get_l2_pq(unsigned int core) const;
+    read_queue_t *get_l3_rq() const;
+    write_queue_t *get_l3_wq() const;
+    prefetch_queue_t *get_l3_pq() const;
+
+    /**
+     * @brief Advances simulation time for all MSHRs across all levels, completing fills.
+     *
+     * @param current_cycle Current processor simulation cycle.
+     */
+    void
+    tick_mshrs(uint64_t current_cycle);
+
+    /**
+     * @brief Drains all outstanding MSHRs and write queues to memory.
+     *
+     * @param current_cycle Reference to processor simulation cycle counter.
+     */
+    void
+    drain_all_mshrs_and_queues(uint64_t &current_cycle);
+
     /**
      * @brief Returns the configuration knobs.
      */
@@ -228,6 +296,27 @@ private:
     std::vector<std::unique_ptr<cache_stats_t>> l2_stats_;    // Per-core L2 statistics.
     std::unique_ptr<cache_lru_t> l3_cache_;                   // Shared unified L3/LLC.
     std::unique_ptr<cache_stats_t> l3_stats_;                 // Shared L3 statistics.
+
+    // Per-core MSHR tables.
+    std::vector<std::unique_ptr<mshr_table_t>> l1i_mshrs_;    // Per-core L1I MSHR tables.
+    std::vector<std::unique_ptr<mshr_table_t>> l1d_mshrs_;    // Per-core L1D MSHR tables.
+    std::vector<std::unique_ptr<mshr_table_t>> l2_mshrs_;     // Per-core L2 MSHR tables.
+    std::unique_ptr<mshr_table_t> l3_mshr_;                   // Shared L3 MSHR table.
+
+    // Per-core queues.
+    std::vector<std::unique_ptr<read_queue_t>> l1i_rqs_;      // Per-core L1I Read Queues.
+    std::vector<std::unique_ptr<prefetch_queue_t>> l1i_pqs_;  // Per-core L1I Prefetch Queues.
+    std::vector<std::unique_ptr<read_queue_t>> l1d_rqs_;      // Per-core L1D Read Queues.
+    std::vector<std::unique_ptr<write_queue_t>> l1d_wqs_;     // Per-core L1D Write Queues.
+    std::vector<std::unique_ptr<prefetch_queue_t>> l1d_pqs_;  // Per-core L1D Prefetch Queues.
+    std::vector<std::unique_ptr<read_queue_t>> l2_rqs_;       // Per-core L2 Read Queues.
+    std::vector<std::unique_ptr<write_queue_t>> l2_wqs_;      // Per-core L2 Write Queues.
+    std::vector<std::unique_ptr<prefetch_queue_t>> l2_pqs_;   // Per-core L2 Prefetch Queues.
+
+    // Shared L3 queues.
+    std::unique_ptr<read_queue_t> l3_rq_;                     // Shared L3 Read Queue.
+    std::unique_ptr<write_queue_t> l3_wq_;                    // Shared L3 Write Queue.
+    std::unique_ptr<prefetch_queue_t> l3_pq_;                 // Shared L3 Prefetch Queue.
 };
 
 } // namespace drmemtrace
