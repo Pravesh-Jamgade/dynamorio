@@ -67,6 +67,12 @@ public:
     virtual2physical(void *drcontext, addr_t virt, DR_PARAM_OUT addr_t *phys,
                      DR_PARAM_OUT bool *from_cache = nullptr);
 
+    // Queries /proc/kpageflags on Linux for the physical frame corresponding to "phys"
+    // to determine whether it is backed by a Transparent Huge Page (KPF_THP) or
+    // hugetlbfs compound huge page (KPF_HUGE / KPF_COMPOUND_HEAD / KPF_COMPOUND_TAIL).
+    bool
+    is_phys_huge_page(addr_t phys, DR_PARAM_OUT bool *is_huge) const;
+
     // This must be called once prior to any instance variables.
     // (If this class weren't used in a DR client context we could use a C++
     // mutex or pthread do-once but those are not safe here.)
@@ -100,6 +106,8 @@ private:
     // how best to do that (maybe the caching will reduce the contention enough)
     // is future work.
     int fd_;
+    // File descriptor for /proc/kpageflags to inspect huge-page flags per PFN.
+    int kpageflags_fd_;
     // We would use std::unordered_map, but that is not compatible with
     // statically linking drmemtrace into an app.
     // The drcontainers hashtable is too slow due to the extra dereferences:

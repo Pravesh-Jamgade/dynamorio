@@ -67,6 +67,13 @@ namespace drmemtrace {
 #    define PAGEMAP_VALID 0x8000000000000000
 #    define PAGEMAP_SWAP 0x4000000000000000
 #    define PAGEMAP_PFN 0x007fffffffffffff
+// /proc/kpageflags bit masks for compound and huge page detection.
+#    define KPF_COMPOUND_HEAD_MASK (1ULL << 15)
+#    define KPF_COMPOUND_TAIL_MASK (1ULL << 16)
+#    define KPF_HUGE_MASK (1ULL << 17)
+#    define KPF_THP_MASK (1ULL << 22)
+#    define KPF_ANY_HUGE_PAGE_MASK \
+        (KPF_COMPOUND_HEAD_MASK | KPF_COMPOUND_TAIL_MASK | KPF_HUGE_MASK | KPF_THP_MASK)
 std::atomic<bool> physaddr_t::has_privileges_;
 #endif
 
@@ -75,6 +82,7 @@ physaddr_t::physaddr_t()
     : page_size_(dr_page_size())
     , cache_idx_(0)
     , fd_(-1)
+    , kpageflags_fd_(-1)
     , v2p_(nullptr)
     , drcontext_(nullptr)
     , count_(0)
@@ -108,6 +116,11 @@ physaddr_t::~physaddr_t()
     }
     if (v2p_ != nullptr)
         dr_hashtable_destroy(drcontext_, v2p_);
+    // Close the /proc/kpageflags file descriptor if opened.
+    if (kpageflags_fd_ != -1) {
+        close(kpageflags_fd_);
+        kpageflags_fd_ = -1;
+    }
 #endif
 }
 
@@ -177,6 +190,9 @@ physaddr_t::init()
     // get EINVAL on any non-8-aligned size, and ifstream at least likes to
     // read buffers of non-aligned sizes.
     fd_ = open(fname, O_RDONLY);
+    // Also attempt to open /proc/kpageflags (non-fatal if unavailable) to allow
+    // querying whether a resolved PFN belongs to a 2MB/1GB huge page.
+    kpageflags_fd_ = open("/proc/kpageflags", O_RDONLY);
     // Accessing /proc/pid/pagemap requires privileges on some distributions,
     // such as Fedora with recent kernels.  We have no choice but to fail there.
     return (fd_ != -1);
@@ -281,6 +297,37 @@ physaddr_t::virtual2physical(void *drcontext, addr_t virt, DR_PARAM_OUT addr_t *
     NOTIFY(2, "virtual %p => physical %p\n", virt, *phys);
     return true;
 #else
+    return false;
+#endif
+}
+
+bool
+physaddr_t::is_phys_huge_page(addr_t phys, DR_PARAM_OUT bool *is_huge) const
+{
+    // Validate the output pointer.
+    if (is_huge == nullptr)
+        return false;
+    // Initialize output flag to false.
+    *is_huge = false;
+#ifdef LINUX
+    // Verify that /proc/kpageflags was opened during init().
+    if (kpageflags_fd_ == -1)
+        return false;
+    // Compute the 4 KB Physical Frame Number (PFN) by shifting right by page_bits_.
+    uint64_t pfn = static_cast<uint64_t>(phys) >> page_bits_;
+    // Compute the 8-byte offset for this PFN inside /proc/kpageflags.
+    off64_t offs = static_cast<off64_t>(pfn * sizeof(uint64_t));
+    // Read the 64-bit kernel page flags entry at `offs`.
+    uint64_t kflags = 0;
+    if (pread(kpageflags_fd_, &kflags, sizeof(kflags), offs) !=
+        static_cast<ssize_t>(sizeof(kflags))) {
+        return false;
+    }
+    // Check whether THP, hugetlbfs, or compound head/tail flags are set.
+    *is_huge = TESTANY(KPF_ANY_HUGE_PAGE_MASK, kflags);
+    return true;
+#else
+    (void)phys;
     return false;
 #endif
 }
