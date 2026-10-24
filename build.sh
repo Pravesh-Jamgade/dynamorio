@@ -51,13 +51,13 @@ case "$CMD" in
         if command -v ninja >/dev/null 2>&1; then
             # Configure build using Ninja generator.
             cmake -GNinja ..
-            # Compile using Ninja with parallel cores.
-            ninja -j"$NPROC"
+            # Compile targeted simulation binaries (drrun, drmemtrace, launcher, and simulator).
+            ninja -j"$NPROC" drrun drmemtrace drmemtrace_launcher drmemtrace_simulator
         else
             # Fall back to standard CMake Unix Makefiles generator.
             cmake ..
-            # Compile using Make with parallel cores.
-            make -j"$NPROC"
+            # Compile targeted simulation binaries (drrun, drmemtrace, launcher, and simulator).
+            make -j"$NPROC" drrun drmemtrace drmemtrace_launcher drmemtrace_simulator
         fi
         # Return to repository root directory.
         cd ..
