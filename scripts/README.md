@@ -10,6 +10,7 @@ For maximum convenience when working from the repository root, top-level symlink
 
 ```text
 dynamorio/
+├── build.sh                                        # Unified parallel build & test script
 ├── run_jobfile.sh    -> scripts/run_jobfile.sh     # Batch parallel job executor
 ├── run_benchmarks.sh -> scripts/run_benchmarks.sh  # Parametric single/suite runner
 ├── scripts/
@@ -28,7 +29,42 @@ Because the root files are symbolic links (`ln -s scripts/...`), you can run the
 
 ---
 
-## 2. Batch Parallel Job Runner (`run_jobfile.sh`)
+## 2. Core Build Automation Script (`build.sh`)
+
+### Purpose
+[`build.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/build.sh) is the central build script for compiling the Out-of-Order CPU engine, MMU Page Table Walker, and 3-Level Cache hierarchy. It auto-detects system CPU core counts (`nproc`) to parallelize builds across all available cores.
+
+### Syntax
+```bash
+./build.sh [TARGET]
+```
+
+### Supported Targets
+| Target | Command | Description | Output |
+| :--- | :--- | :--- | :--- |
+| `sim` | `./build.sh sim` *(or `./build.sh`)* | Fast parallel compilation of the standalone trace simulation engine. | [`bin/run_cpu_sim`](file:///media/pravesh/Storage/code/dyn/dynamorio/bin/run_cpu_sim) |
+| `drrun` | `./build.sh drrun` | Builds DynamoRIO's live execution engine and drcachesim tracer client. Auto-detects Ninja/Make and creates `bin64 -> build/bin64` symlink. | [`build/bin64/drrun`](file:///media/pravesh/Storage/code/dyn/dynamorio/build/bin64/drrun) |
+| `test` | `./build.sh test` | Compiles and executes the full 14-suite regression test suite across all cores. | [`bin/unit_tests`](file:///media/pravesh/Storage/code/dyn/dynamorio/bin/unit_tests) |
+| `clean` | `./build.sh clean` | Removes all compiled objects and binary directories (`build_sim/`, `bin/`). | — |
+
+### Examples
+```bash
+# 1. Build standalone trace simulator:
+./build.sh sim
+
+# 2. Build live application engine and tracer:
+./build.sh drrun
+
+# 3. Run regression unit tests:
+./build.sh test
+
+# 4. Clean compiled binaries:
+./build.sh clean
+```
+
+---
+
+## 3. Batch Parallel Job Runner (`run_jobfile.sh`)
 
 ### Purpose
 [`scripts/run_jobfile.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/scripts/run_jobfile.sh) reads [`jobs/jobfile.txt`](file:///media/pravesh/Storage/code/dyn/dynamorio/jobs/jobfile.txt) (or any custom command list) line-by-line, pools processes, and executes up to **$N$ jobs concurrently**. It records independent console logs for every job, captures per-simulation CSV statistics, and prints a formatted comparative metrics table at the conclusion of all jobs.
@@ -80,7 +116,7 @@ Because the root files are symbolic links (`ln -s scripts/...`), you can run the
 
 ---
 
-## 3. Parametric Benchmark Runner (`run_benchmarks.sh`)
+## 4. Parametric Benchmark Runner (`run_benchmarks.sh`)
 
 ### Purpose
 [`scripts/run_benchmarks.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/scripts/run_benchmarks.sh) provides a high-level parametric interface to launch individual benchmarks (`hello`, `btree`, `gups`, `hashjoin`, `xsbench`) or the entire suite. It dynamically handles CPU configuration profiles (`configs/o3_default.ini`, `configs/o3_server.ini`), simulation limits, and huge memory allocations.
@@ -130,7 +166,7 @@ Because the root files are symbolic links (`ln -s scripts/...`), you can run the
 
 ---
 
-## 4. INI Config Parser & Simulator Builder (`build_from_config.py`)
+## 5. INI Config Parser & Simulator Builder (`build_from_config.py`)
 
 ### Purpose
 [`scripts/build_from_config.py`](file:///media/pravesh/Storage/code/dyn/dynamorio/scripts/build_from_config.py) resolves nested INI configuration files (handling recursive `include = ...` statements), validates microarchitectural parameters, triggers parallel compilation of the simulator, and can immediately execute an instruction trace through the compiled simulator.
@@ -166,7 +202,7 @@ python3 scripts/build_from_config.py \
 
 ---
 
-## 5. Benchmark Application Compiler (`apps/compile_apps.sh`)
+## 6. Benchmark Application Compiler (`apps/compile_apps.sh`)
 
 ### Purpose
 [`apps/compile_apps.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/apps/compile_apps.sh) compiles all application source code into standalone executable binaries in the [`apps/`](file:///media/pravesh/Storage/code/dyn/dynamorio/apps/) directory.
@@ -195,7 +231,7 @@ python3 scripts/build_from_config.py \
 
 ---
 
-## 6. Output Files & Results Structure
+## 7. Output Files & Results Structure
 
 When running simulations via [`run_jobfile.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/run_jobfile.sh) or [`run_benchmarks.sh`](file:///media/pravesh/Storage/code/dyn/dynamorio/run_benchmarks.sh), results are saved to the `results/` directory:
 
