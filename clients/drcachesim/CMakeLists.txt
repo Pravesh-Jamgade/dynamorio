@@ -219,6 +219,7 @@ add_exported_library(drmemtrace_simulator STATIC
   simulator/cpu/cpu_core.cpp
   simulator/cpu/wrong_path.cpp
   simulator/cpu/cpu_simulator.cpp
+  reader/champsim_reader.cpp
   )
 
 add_exported_library(drmemtrace_record_filter STATIC

@@ -99,3 +99,13 @@ clients/drcachesim/simulator/cpu/
 - **Speculative Cache & TLB Pollution**: Speculative loads access L1D, L2, L3, and the DTLB. Cold cache lines are brought from DRAM into the hierarchy.
 - **Architectural Store Safety**: Speculative stores buffer in the SQ, but **never commit to cache** because commit is strictly in program order.
 - **Squash on Resolution**: When the branch resolves, `cpu_core_t` calls `rob_.squash_after()`, `scoreboard_.squash_after()`, and `lsq_.squash_after()`. All wrong-path instructions are discarded, but the **cache lines and TLB translations they loaded remain in hardware** (faithfully modeling Spectre-style speculative side effects).
+
+### 4.5 ChampSim & CloudSuite Google Trace Reader (`champsim_trace_reader_t`)
+- **Standard ChampSim Format (64-byte records)**:
+  - Binary instruction record: `uint64_t ip`, `uint8_t is_branch`, `uint8_t branch_taken`, `uint8_t destination_registers[2]`, `uint8_t source_registers[4]`, `uint64_t destination_memory[2]`, `uint64_t source_memory[4]`.
+  - Used by Google Datacenter benchmark callsets (e.g., `bc-0`, `bfs-10`, `cc-13`, `sssp-10`, `nutch_phase0_core1`).
+- **CloudSuite Format (96-byte records)**:
+  - Extended binary record with `destination_registers[4]`, `destination_memory[4]` (up to 4 memory stores per instruction), `source_memory[4]`, and `asid[2]` (Address Space Identifier).
+  - Used by CloudSuite server and multi-process workloads.
+- **Decompression**: Automatic streaming decompression via parallel pipelines for `.gz`, `.xz`, and `.bz2` traces, as well as uncompressed `.trace` binary files.
+- **DynamoRIO Unpacking**: Maps binary records into program-order `TRACE_TYPE_INSTR` fetch events, followed by all valid `TRACE_TYPE_READ` loads and `TRACE_TYPE_WRITE` stores, allowing seamless trace playback directly through `cpu_simulator_t::process_memref()`.

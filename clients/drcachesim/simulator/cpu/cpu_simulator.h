@@ -164,6 +164,24 @@ public:
     three_level_cache_t *
     get_cache_hierarchy() const;
 
+    /**
+     * @brief Returns the configuration knobs.
+     */
+    const cpu_simulator_knobs_t &
+    get_knobs() const
+    {
+        return knobs_;
+    }
+
+    /**
+     * @brief Returns the number of simulated CPU cores.
+     */
+    size_t
+    num_cores() const
+    {
+        return cores_.size();
+    }
+
 private:
     cpu_simulator_knobs_t knobs_;                             // Configuration knobs.
     std::unique_ptr<three_level_cache_t> cache_hierarchy_;    // Unified 3-level data cache.

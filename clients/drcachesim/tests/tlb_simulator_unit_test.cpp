@@ -57,6 +57,8 @@
 #include "../simulator/cache_stats.h"
 // Speculative wrong-path execution engine.
 #include "../simulator/cpu/wrong_path.h"
+// ChampSim and CloudSuite trace reader adapter.
+#include "../reader/champsim_reader.h"
 // Complete Out-of-Order CPU and 3-level cache simulator.
 #include "../simulator/cpu/cpu_simulator.h"
 // Memory reference structure definition.
@@ -1074,6 +1076,164 @@ unit_test_wrong_path_speculation()
     assert(core->get_lsq().sq_size() == 0);
 }
 
+// Test 13: ChampSim Standard (64-byte) and CloudSuite (96-byte) Trace Reader.
+static void
+unit_test_champsim_and_cloudsuite_reader()
+{
+    // 1. Test Standard 64-byte ChampSim record reading and unpacking.
+    std::string std_trace_path = "/tmp/test_std_champsim.trace";
+    // Open binary output file.
+    FILE *f_std = fopen(std_trace_path.c_str(), "wb");
+    // Verify file created.
+    assert(f_std != nullptr);
+
+    // Create a 64-byte instruction record:
+    champsim_instr_t std_instr = {};
+    // Program counter.
+    std_instr.ip = 0x401000;
+    // Not a branch.
+    std_instr.is_branch = 0;
+    // Not taken.
+    std_instr.branch_taken = 0;
+    // Destination register.
+    std_instr.destination_registers[0] = 1;
+    // Source register.
+    std_instr.source_registers[0] = 2;
+    // 1 store address.
+    std_instr.destination_memory[0] = 0x7fff0010;
+    // 1 load address.
+    std_instr.source_memory[0] = 0x7fff0020;
+    // Write 64 bytes to file.
+    size_t written = fwrite(&std_instr, 1, sizeof(std_instr), f_std);
+    // Verify 64 bytes written.
+    assert(written == 64);
+    // Close file.
+    fclose(f_std);
+
+    // Read standard trace via champsim_trace_reader_t.
+    champsim_trace_reader_t std_reader(std_trace_path, champsim_trace_format_t::FORMAT_STANDARD);
+    // Verify open succeeds.
+    assert(std_reader.open());
+    // Verify format is standard.
+    assert(!std_reader.is_cloudsuite());
+
+    // Unpack memrefs: must yield 1 instruction fetch, 1 load, and 1 store.
+    memref_t m1 = {}, m2 = {}, m3 = {}, m4 = {};
+    // First reference: instruction fetch.
+    assert(std_reader.get_next_memref(m1));
+    // Verify type is instruction fetch and PC matches.
+    assert(m1.instr.type == TRACE_TYPE_INSTR && m1.instr.addr == 0x401000);
+    // Second reference: data read.
+    assert(std_reader.get_next_memref(m2));
+    // Verify type is read and address matches.
+    assert(m2.data.type == TRACE_TYPE_READ && m2.data.addr == 0x7fff0020);
+    // Third reference: data write.
+    assert(std_reader.get_next_memref(m3));
+    // Verify type is write and address matches.
+    assert(m3.data.type == TRACE_TYPE_WRITE && m3.data.addr == 0x7fff0010);
+    // Fourth reference: EOF.
+    assert(!std_reader.get_next_memref(m4));
+    // Close reader.
+    std_reader.close();
+    // Clean up temporary file.
+    remove(std_trace_path.c_str());
+
+    // 2. Test CloudSuite 96-byte ChampSim record reading and unpacking.
+    std::string cs_trace_path = "/tmp/test_cloudsuite.trace";
+    // Open binary output file.
+    FILE *f_cs = fopen(cs_trace_path.c_str(), "wb");
+    // Verify file created.
+    assert(f_cs != nullptr);
+
+    // Create a 96-byte CloudSuite instruction record:
+    cloudsuite_instr_t cs_instr = {};
+    // Program counter.
+    cs_instr.ip = 0x402000;
+    // Is branch.
+    cs_instr.is_branch = 1;
+    // Branch taken.
+    cs_instr.branch_taken = 1;
+    // Destination register.
+    cs_instr.destination_registers[0] = 3;
+    // Source register.
+    cs_instr.source_registers[0] = 4;
+    // 4 stores in CloudSuite format:
+    cs_instr.destination_memory[0] = 0x7fff1000;
+    cs_instr.destination_memory[1] = 0x7fff1008;
+    cs_instr.destination_memory[2] = 0x7fff1010;
+    cs_instr.destination_memory[3] = 0x7fff1018;
+    // 4 loads in CloudSuite format:
+    cs_instr.source_memory[0] = 0x7fff2000;
+    cs_instr.source_memory[1] = 0x7fff2008;
+    cs_instr.source_memory[2] = 0x7fff2010;
+    cs_instr.source_memory[3] = 0x7fff2018;
+    // Address Space ID 42 (PID).
+    cs_instr.asid[0] = 42;
+    // Thread ID 1.
+    cs_instr.asid[1] = 1;
+    // Write 96 bytes to file.
+    written = fwrite(&cs_instr, 1, sizeof(cs_instr), f_cs);
+    // Verify 96 bytes written.
+    assert(written == 96);
+    // Close file.
+    fclose(f_cs);
+
+    // Read CloudSuite trace via champsim_trace_reader_t.
+    champsim_trace_reader_t cs_reader(cs_trace_path, champsim_trace_format_t::FORMAT_CLOUDSUITE);
+    // Verify open succeeds.
+    assert(cs_reader.open());
+    // Verify format is CloudSuite.
+    assert(cs_reader.is_cloudsuite());
+
+    // Unpack memrefs: must yield 1 instruction fetch (with PID 42, TID 1), 4 loads, 4 stores = 9 memrefs!
+    std::vector<memref_t> cs_refs;
+    memref_t ref;
+    // Drain all memrefs.
+    while (cs_reader.get_next_memref(ref)) {
+        cs_refs.push_back(ref);
+    }
+    // Verify count is 9.
+    assert(cs_refs.size() == 9);
+    // Verify instruction fetch has PID 42 and TID 1.
+    assert(cs_refs[0].instr.type == TRACE_TYPE_INSTR && cs_refs[0].instr.addr == 0x402000);
+    assert(cs_refs[0].instr.pid == 42 && cs_refs[0].instr.tid == 1);
+    // Verify 4 data reads.
+    for (int i = 1; i <= 4; ++i) {
+        assert(cs_refs[i].data.type == TRACE_TYPE_READ);
+        assert(cs_refs[i].data.pid == 42);
+    }
+    // Verify 4 data writes.
+    for (int i = 5; i <= 8; ++i) {
+        assert(cs_refs[i].data.type == TRACE_TYPE_WRITE);
+        assert(cs_refs[i].data.pid == 42);
+    }
+    // Close reader.
+    cs_reader.close();
+    // Clean up temporary file.
+    remove(cs_trace_path.c_str());
+
+    // 3. Test real trace playback from disk if Google trace exists.
+    std::string google_trace = "/media/pravesh/Storage/ALL_TRACES/nutch_phase0_core1.trace.xz";
+    FILE *check_f = fopen(google_trace.c_str(), "rb");
+    if (check_f != nullptr) {
+        fclose(check_f);
+        // Create ChampSim trace reader.
+        champsim_trace_reader_t real_reader(google_trace);
+        // Verify open succeeds.
+        assert(real_reader.open());
+        // Configure single core simulator.
+        cpu_simulator_knobs_t knobs;
+        knobs.num_cores = 1;
+        cpu_simulator_t sim(knobs);
+        // Simulate 1000 instructions from real Google trace.
+        uint64_t simulated = real_reader.run_simulation(sim, /*max_instructions=*/1000, /*print_interval=*/0);
+        // Verify simulated count matches 1000.
+        assert(simulated == 1000);
+        // Verify core retired instructions.
+        assert(sim.get_core(0)->total_instructions_retired() > 0);
+    }
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1104,6 +1264,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_ooo_cpu_simulator();
     // Run Speculative Wrong-Path Execution, Cache Pollution, and Pipeline Squash unit test.
     unit_test_wrong_path_speculation();
+    // Run ChampSim Standard (64-byte) and CloudSuite (96-byte) Trace Reader unit test.
+    unit_test_champsim_and_cloudsuite_reader();
 }
 
 } // namespace drmemtrace
