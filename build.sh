@@ -47,16 +47,35 @@ case "$CMD" in
         echo "Building DynamoRIO runtime (drrun) and drcachesim tracer..."
         # Create dedicated out-of-source build directory.
         mkdir -p build && cd build
-        # Check if ninja generator is available on system.
-        if command -v ninja >/dev/null 2>&1; then
-            # Configure build using Ninja generator.
+        # Determine whether to use Ninja or Make based on existing CMake cache or tool availability.
+        if [[ -f CMakeCache.txt ]]; then
+            # Check if existing cache was configured for Ninja generator.
+            if grep -q "CMAKE_GENERATOR:INTERNAL=Ninja" CMakeCache.txt 2>/dev/null; then
+                # Keep using Ninja to prevent generator mismatch errors.
+                USE_NINJA=1
+            else
+                # Keep using Make to match the existing Makefile cache.
+                USE_NINJA=0
+            fi
+        # Check if ninja command is available on system for fresh configurations.
+        elif command -v ninja >/dev/null 2>&1; then
+            # Enable Ninja generator for fresh builds.
+            USE_NINJA=1
+        else
+            # Default to Unix Makefiles generator.
+            USE_NINJA=0
+        fi
+
+        # Execute build using the determined generator.
+        if [[ $USE_NINJA -eq 1 ]]; then
+            # Configure or update build with Ninja generator.
             cmake -GNinja ..
-            # Compile targeted simulation binaries (drrun, drmemtrace, launcher, and simulator).
+            # Compile targeted simulation binaries using Ninja with parallel cores.
             ninja -j"$NPROC" drrun drmemtrace drmemtrace_launcher drmemtrace_simulator
         else
-            # Fall back to standard CMake Unix Makefiles generator.
+            # Configure or update build with standard Make generator.
             cmake ..
-            # Compile targeted simulation binaries (drrun, drmemtrace, launcher, and simulator).
+            # Compile targeted simulation binaries using Make with parallel cores.
             make -j"$NPROC" drrun drmemtrace drmemtrace_launcher drmemtrace_simulator
         fi
         # Return to repository root directory.
