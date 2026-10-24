@@ -10,8 +10,10 @@
 # Enable strict bash error handling.
 set -eo pipefail
 
+# Determine canonical script directory resolving any symlinks.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # Determine repository root directory.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Set default simulator launcher path.
 DRRUN="${REPO_ROOT}/build/bin64/drrun"
 # Set default configuration file.
