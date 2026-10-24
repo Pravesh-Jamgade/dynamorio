@@ -469,6 +469,15 @@ if (X86 AND X64 AND ZIP_FOUND)
   set_tests_properties(tool.scheduler_launcher PROPERTIES TIMEOUT ${test_seconds})
 endif ()
 
+# Out-of-Order CPU, MMU, and 3-Level Cache trace simulator CLI launcher.
+add_executable(run_cpu_sim simulator/cpu/run_cpu_sim.cpp)
+# Link against the core simulator library and frontend utilities.
+target_link_libraries(run_cpu_sim drmemtrace_simulator drfrontendlib)
+# Enable droption support for CLI options.
+use_DynamoRIO_extension(run_cpu_sim droption)
+# Depend on exported API headers.
+add_dependencies(run_cpu_sim api_headers)
+
 # We have a companion test built using a separate --build-and-test CMake project in
 # tests/analyzer_separate.cpp to better test 3rd-party usage.
 set_property(GLOBAL PROPERTY DynamoRIO_drmemtrace_src_dir
