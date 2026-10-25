@@ -415,6 +415,65 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
         }
     }
 
+    // Output TLB hierarchy metrics (L1 ITLB, L1 DTLB, Unified L2 TLB).
+    int64_t total_itlb_hits = 0;                                                    // Aggregate ITLB hits.
+    int64_t total_itlb_misses = 0;                                                  // Aggregate ITLB misses.
+    int64_t total_itlb_comp_misses = 0;                                             // Aggregate ITLB compulsory misses.
+    int64_t total_dtlb_hits = 0;                                                    // Aggregate DTLB hits.
+    int64_t total_dtlb_misses = 0;                                                  // Aggregate DTLB misses.
+    int64_t total_dtlb_comp_misses = 0;                                             // Aggregate DTLB compulsory misses.
+    int64_t total_l2tlb_hits = 0;                                                   // Aggregate L2TLB hits.
+    int64_t total_l2tlb_misses = 0;                                                 // Aggregate L2TLB misses.
+    int64_t total_l2tlb_comp_misses = 0;                                            // Aggregate L2TLB compulsory misses.
+
+    // Sum TLB statistics across all simulated CPU cores.
+    for (unsigned int i = 0; i < knobs_.num_cores; ++i) {                           // Iterate cores.
+        if (i < itlbs_.size() && itlbs_[i] != nullptr && itlbs_[i]->get_stats() != nullptr) { // Check ITLB.
+            total_itlb_hits += itlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
+            total_itlb_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
+            total_itlb_comp_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+        }
+        if (i < dtlbs_.size() && dtlbs_[i] != nullptr && dtlbs_[i]->get_stats() != nullptr) { // Check DTLB.
+            total_dtlb_hits += dtlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
+            total_dtlb_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
+            total_dtlb_comp_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+        }
+        if (i < l2_tlbs_.size() && l2_tlbs_[i] != nullptr && l2_tlbs_[i]->get_stats() != nullptr) { // Check L2TLB.
+            total_l2tlb_hits += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
+            total_l2tlb_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
+            total_l2tlb_comp_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+        }
+    }
+
+    // Compute TLB miss rates.
+    double itlb_miss_rate = (total_itlb_hits + total_itlb_misses > 0)               // Calculate ITLB rate.
+        ? (static_cast<double>(total_itlb_misses) / (total_itlb_hits + total_itlb_misses)) // Compute fraction.
+        : 0.0;                                                                      // Zero fallback.
+    double dtlb_miss_rate = (total_dtlb_hits + total_dtlb_misses > 0)               // Calculate DTLB rate.
+        ? (static_cast<double>(total_dtlb_misses) / (total_dtlb_hits + total_dtlb_misses)) // Compute fraction.
+        : 0.0;                                                                      // Zero fallback.
+    double l2tlb_miss_rate = (total_l2tlb_hits + total_l2tlb_misses > 0)             // Calculate L2TLB rate.
+        ? (static_cast<double>(total_l2tlb_misses) / (total_l2tlb_hits + total_l2tlb_misses)) // Compute fraction.
+        : 0.0;                                                                      // Zero fallback.
+
+    // Emit ITLB CSV statistics.
+    os << "ITLB hits, " << total_itlb_hits << "\n";                                 // Output ITLB hits.
+    os << "ITLB misses, " << total_itlb_misses << "\n";                             // Output ITLB misses.
+    os << "ITLB compulsory misses, " << total_itlb_comp_misses << "\n";             // Output ITLB compulsory misses.
+    os << "ITLB miss rate, " << itlb_miss_rate << "\n";                             // Output ITLB miss rate.
+
+    // Emit DTLB CSV statistics.
+    os << "DTLB hits, " << total_dtlb_hits << "\n";                                 // Output DTLB hits.
+    os << "DTLB misses, " << total_dtlb_misses << "\n";                             // Output DTLB misses.
+    os << "DTLB compulsory misses, " << total_dtlb_comp_misses << "\n";             // Output DTLB compulsory misses.
+    os << "DTLB miss rate, " << dtlb_miss_rate << "\n";                             // Output DTLB miss rate.
+
+    // Emit unified L2 TLB CSV statistics.
+    os << "L2TLB hits, " << total_l2tlb_hits << "\n";                               // Output L2TLB hits.
+    os << "L2TLB misses, " << total_l2tlb_misses << "\n";                           // Output L2TLB misses.
+    os << "L2TLB compulsory misses, " << total_l2tlb_comp_misses << "\n";           // Output L2TLB compulsory misses.
+    os << "L2TLB miss rate, " << l2tlb_miss_rate << "\n";                           // Output L2TLB miss rate.
+
     // MMU and Page Table Walker metrics.
     if (!walkers_.empty() && walkers_[0] != nullptr) {
         const mmu_stats_t &m_stats = walkers_[0]->get_stats();                       // Core 0 MMU stats.
@@ -496,7 +555,26 @@ cpu_simulator_t::print_results()
     std::cerr << "-------------------------------------------------------------------\n";
     cache_hierarchy_->print_stats("  ");
 
-    // 3. Print MMU / Page Table Walker statistics.
+    // 3. Print TLB hierarchy statistics (L1 ITLB, L1 DTLB, Unified L2 TLB).
+    std::cerr << "-------------------------------------------------------------------\n";
+    std::cerr << "  TLB Hierarchy Statistics (L1 ITLB, L1 DTLB, Unified L2 TLB):\n";
+    std::cerr << "-------------------------------------------------------------------\n";
+    for (unsigned int i = 0; i < knobs_.num_cores; ++i) {                                 // Iterate cores.
+        std::cerr << "  Core #" << i << " L1 ITLB stats:\n";                              // Core ITLB header.
+        if (i < itlbs_.size() && itlbs_[i] != nullptr && itlbs_[i]->get_stats() != nullptr) { // Check valid ITLB.
+            itlbs_[i]->get_stats()->print_stats("    ");                                   // Print ITLB stats.
+        }
+        std::cerr << "  Core #" << i << " L1 DTLB stats:\n";                              // Core DTLB header.
+        if (i < dtlbs_.size() && dtlbs_[i] != nullptr && dtlbs_[i]->get_stats() != nullptr) { // Check valid DTLB.
+            dtlbs_[i]->get_stats()->print_stats("    ");                                   // Print DTLB stats.
+        }
+        std::cerr << "  Core #" << i << " Unified L2 TLB stats:\n";                       // Core L2 TLB header.
+        if (i < l2_tlbs_.size() && l2_tlbs_[i] != nullptr && l2_tlbs_[i]->get_stats() != nullptr) { // Check valid L2TLB.
+            l2_tlbs_[i]->get_stats()->print_stats("    ");                                 // Print L2 TLB stats.
+        }
+    }
+
+    // 4. Print MMU / Page Table Walker statistics.
     std::cerr << "-------------------------------------------------------------------\n";
     std::cerr << "  MMU, Page Table Walk & Page Walk Cache (PWC) Statistics:\n";
     std::cerr << "-------------------------------------------------------------------\n";
@@ -505,13 +583,13 @@ cpu_simulator_t::print_results()
         walkers_[i]->get_stats().print_stats("    ");
     }
 
-    // 4. Output CSV formatted simulation results to std::cerr.
+    // 5. Output CSV formatted simulation results to std::cerr.
     std::cerr << "-------------------------------------------------------------------\n";
     std::cerr << "  CSV Simulation Statistics:\n";
     std::cerr << "-------------------------------------------------------------------\n";
     print_csv_stats(std::cerr);
 
-    // 5. Also write CSV results directly to stats_file (default stats.log).
+    // 6. Also write CSV results directly to stats_file (default stats.log).
     if (!knobs_.stats_file.empty()) {
         std::ofstream ofs(knobs_.stats_file);
         if (ofs.is_open()) {

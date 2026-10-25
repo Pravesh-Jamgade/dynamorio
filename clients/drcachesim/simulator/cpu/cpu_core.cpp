@@ -296,6 +296,25 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
             completion_cycle = issue_cycle + tlb_latency + cache_latency;
         }
     } else if (instr.op_type == cpu_op_type_t::OP_STORE) {
+        // Translate store memory address via L1 Data TLB during Address Generation (AGU).
+        if (dtlb_ != nullptr) {
+            // Build synthetic memory reference for store DTLB translation.
+            memref_t memref = {};
+            // Set operation type to memory store.
+            memref.data.type = TRACE_TYPE_WRITE;
+            // Set store target address.
+            memref.data.addr = instr.mem_addr;
+            // Set store byte width.
+            memref.data.size = instr.mem_size;
+            // Set process identifier.
+            memref.data.pid = instr.pid;
+            // Set thread identifier.
+            memref.data.tid = instr.tid;
+            // Set instruction program counter.
+            memref.data.pc = instr.pc;
+            // Route store memory reference through L1 DTLB.
+            dtlb_->request(memref);
+        }
         // Store instructions write their value into the Store Queue in 1 cycle,
         // and only drain to the L1D cache upon in-order ROB commit!
         completion_cycle = issue_cycle + 1;

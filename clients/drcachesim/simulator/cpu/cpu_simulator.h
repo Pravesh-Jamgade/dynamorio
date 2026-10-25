@@ -217,6 +217,51 @@ public:
     get_cache_hierarchy() const;
 
     /**
+     * @brief Returns the L1 Instruction TLB for the specified core index.
+     */
+    tlb_t *
+    get_itlb(unsigned int core_index) const
+    {
+        // Validate core index within range.
+        if (core_index < itlbs_.size()) {
+            // Return raw pointer to core's L1 ITLB.
+            return itlbs_[core_index].get();
+        }
+        // Return nullptr on invalid index.
+        return nullptr;
+    }
+
+    /**
+     * @brief Returns the L1 Data TLB for the specified core index.
+     */
+    tlb_t *
+    get_dtlb(unsigned int core_index) const
+    {
+        // Validate core index within range.
+        if (core_index < dtlbs_.size()) {
+            // Return raw pointer to core's L1 DTLB.
+            return dtlbs_[core_index].get();
+        }
+        // Return nullptr on invalid index.
+        return nullptr;
+    }
+
+    /**
+     * @brief Returns the unified L2 TLB for the specified core index.
+     */
+    tlb_t *
+    get_l2_tlb(unsigned int core_index) const
+    {
+        // Validate core index within range.
+        if (core_index < l2_tlbs_.size()) {
+            // Return raw pointer to core's unified L2 TLB.
+            return l2_tlbs_[core_index].get();
+        }
+        // Return nullptr on invalid index.
+        return nullptr;
+    }
+
+    /**
      * @brief Returns the configuration knobs.
      */
     const cpu_simulator_knobs_t &

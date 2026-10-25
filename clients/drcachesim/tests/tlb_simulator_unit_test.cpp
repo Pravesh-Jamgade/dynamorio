@@ -540,6 +540,8 @@ unit_test_replacement_policies_and_shootdowns()
         tlb_simulator_knobs_t knobs;
         knobs.num_cores = 2;
         knobs.page_size = 4096;
+        knobs.TLB_L1I_entries = 4;
+        knobs.TLB_L1I_assoc = 4;
         knobs.TLB_L1D_entries = 4;
         knobs.TLB_L1D_assoc = 4;
         knobs.TLB_L2_entries = 8;
@@ -551,15 +553,36 @@ unit_test_replacement_policies_and_shootdowns()
         tlb_simulator_t sim(knobs);
         const memref_pid_t pid = 4242;
 
+        // Issue 5 distinct instruction fetches followed by immediate repeat accesses on core 0 (tid=22222).
+        // First access per page must miss in L1 ITLB, and repeat access must hit in L1 ITLB.
+        for (int i = 0; i < 5; ++i) {
+            // Compute unique 4KB aligned virtual instruction address.
+            addr_t ipc = 0x0000000000400000ULL + static_cast<addr_t>(i) * 4096ULL;
+            // First fetch triggers compulsory ITLB miss and page table walk on core 0.
+            assert(sim.process_memref(generate_mem_ref(ipc, ipc, pid, 22222, TRACE_TYPE_INSTR)));
+            // Second fetch triggers L1 ITLB hit on core 0.
+            assert(sim.process_memref(generate_mem_ref(ipc, ipc, pid, 22222, TRACE_TYPE_INSTR)));
+        }
+
         // Access 10 distinct 4KB pages to exercise L1 and L2 TLB eviction under `policy`.
         for (int i = 0; i < 10; ++i) {
             addr_t vaddr = 0x00007f8800000000ULL + static_cast<addr_t>(i) * 4096ULL;
             assert(sim.process_memref(generate_mem_ref(vaddr, 0x700000, pid)));
         }
 
+        // Verify L1 ITLB recorded hits and misses accurately.
+        const tlb_stats_t *itlb_stats = sim.get_tlb_stats(0, 1, /*is_instr=*/true);
+        // Verify ITLB stats pointer is valid.
+        assert(itlb_stats != nullptr);
+        // Verify 5 ITLB hits from repeated accesses.
+        assert(itlb_stats->get_metric(metric_name_t::HITS) == 5);
+        // Verify 5 ITLB misses from first accesses.
+        assert(itlb_stats->get_metric(metric_name_t::MISSES) == 5);
+
         const mmu_stats_t *stats = sim.get_mmu_stats(0);
         assert(stats != nullptr);
-        assert(stats->get_total_ptw_walks() == 10);
+        // 5 instruction page walks + 10 data page walks = 15 total walks.
+        assert(stats->get_total_ptw_walks() == 15);
 
         // Perform a TLB shootdown on the most recently accessed page (i = 9).
         addr_t last_vaddr = 0x00007f8800000000ULL + 9ULL * 4096ULL;
@@ -567,9 +590,9 @@ unit_test_replacement_policies_and_shootdowns()
         assert(stats->get_tlb_shootdowns() == 1);
 
         // Accessing `last_vaddr` again must miss in both L1 and L2 TLBs and trigger an
-        // 11th page table walk!
+        // 16th page table walk!
         assert(sim.process_memref(generate_mem_ref(last_vaddr, 0x700008, pid)));
-        assert(stats->get_total_ptw_walks() == 11);
+        assert(stats->get_total_ptw_walks() == 16);
 
         // Also verify print_results() executes cleanly with zero errors.
         assert(sim.print_results());
@@ -904,6 +927,26 @@ unit_test_ooo_cpu_simulator()
     assert(core->get_current_cycle() > 20);
     assert(core->get_ipc() > 0.0);
     assert(core->get_cpi() > 0.0);
+
+    // Verify ITLB received instruction fetches and recorded hits/misses.
+    tlb_t *itlb = sim.get_itlb(0);                                                  // Retrieve core 0 ITLB.
+    assert(itlb != nullptr);                                                         // Verify non-null ITLB.
+    assert(itlb->get_stats() != nullptr);                                            // Verify valid ITLB stats.
+    assert(itlb->get_stats()->get_metric(metric_name_t::MISSES) >= 1);               // At least 1 compulsory miss on 0x400000.
+    assert(itlb->get_stats()->get_metric(metric_name_t::HITS) >= 19);                // Remaining 19 instruction fetches hit!
+
+    // Verify DTLB received data memory references and recorded hits/misses.
+    tlb_t *dtlb = sim.get_dtlb(0);                                                  // Retrieve core 0 DTLB.
+    assert(dtlb != nullptr);                                                         // Verify non-null DTLB.
+    assert(dtlb->get_stats() != nullptr);                                            // Verify valid DTLB stats.
+    assert(dtlb->get_stats()->get_metric(metric_name_t::MISSES) >= 1);               // At least 1 compulsory miss on data page.
+    assert(dtlb->get_stats()->get_metric(metric_name_t::HITS) >= 1);                 // Hits on repeated data page accesses.
+
+    // Verify unified L2 TLB received requests on L1 misses.
+    tlb_t *l2_tlb = sim.get_l2_tlb(0);                                              // Retrieve core 0 L2 TLB.
+    assert(l2_tlb != nullptr);                                                       // Verify non-null L2 TLB.
+    assert(l2_tlb->get_stats() != nullptr);                                          // Verify valid L2 TLB stats.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) >= 1);             // L2 compulsory misses.
 
     // Verify results print cleanly.
     assert(sim.print_results());
