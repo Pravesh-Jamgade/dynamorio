@@ -141,11 +141,119 @@ clients/drcachesim/simulator/cpu/
   - Direct execution: `./bin/run_cpu_sim --config configs/o3_server.ini --trace <path>`
   - Automated wrapper: `./build_from_config.sh --config configs/o3_server.ini --trace <path>`
 
+### 4.8 Sectored L2 TLB & Leaf Block Co-Allocation (`tlb_entry_t`, `page_table.cpp`)
+- **Configurable Sector Sizes ($S \in \{1, 2, 4, 8\}$)**:
+  - Instead of caching an isolated 4 KB translation, a single L2 TLB sector block caches up to 8 sibling PTEs sharing $\lfloor\text{VPN} / S\rfloor$.
+  - **Capacity Invariance**: The total number of PTE entries remains constant at 1536 entries across all modes:
+    - Baseline ($S=1$): $256 \text{ sets} \times 6 \text{ ways} = 1536 \text{ entries}$ (4 KB blocks).
+    - Sector=2 ($S=2$): $128 \text{ sets} \times 6 \text{ ways} = 768 \text{ sector blocks} \times 2 \text{ PTEs} = 1536 \text{ entries}$ (8 KB blocks).
+    - Sector=4 ($S=4$): $64 \text{ sets} \times 6 \text{ ways} = 384 \text{ sector blocks} \times 4 \text{ PTEs} = 1536 \text{ entries}$ (16 KB blocks).
+    - Sector=8 ($S=8$): $32 \text{ sets} \times 6 \text{ ways} = 192 \text{ sector blocks} \times 8 \text{ PTEs} = 1536 \text{ entries}$ (32 KB blocks).
+- **Leaf PTE Block Co-Allocation**:
+  - When an L2 TLB miss occurs, `page_table_walker_t::walk()` executes a multi-level radix page table walk.
+  - In `walk_and_populate()`, all $S$ sibling PTEs sharing `base_idx = (idx / S) * S` are retrieved.
+  - The hardware memory read issued by `issue_pte_cache_read()` widens to $S \times 8$ bytes (e.g. 64 bytes for $S=8$, matching a full cache line fetch into L1D/L2/L3).
+- **Per-Sub-Entry Validity & Pagemap Validation**:
+  - Each sector block tracks individual `valid`, `ppn`, and `dirty` bits per PTE ([`tlb_sub_entry_t`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/tlb_entry.h#L55)).
+  - When an external pagemap (`external_v2p` / `/proc/<pid>/pagemap`) is active, only sibling pages with verified valid PFN bits (Bit 63 = 1) are marked `valid = true`. Sibling pages unmapped in pagemap are installed as `valid = false`.
+  - When an invalid sibling sub-entry is later demand-accessed, the TLB detects a sector tag hit but a sub-entry valid miss, faulting in that specific sub-entry into the existing sector way without evicting other set entries.
+
 ---
 
-## 5. Usage: Running Traces & Applications through the O3 Engine
+## 5. Codebase Exploration Guide: Understanding the O3 Engine
 
-### 5.0 Fast Build Instructions (1 Command)
+To understand or extend the Out-of-Order CPU simulation engine, follow the **instruction and memory dataflow** in this sequence:
+
+```text
+                                  +---------------------------+
+                                  |     Trace / Ingestion     |
+                                  |  (champsim_reader / drrun)|
+                                  +-------------+-------------+
+                                                |
+                                                v
+                                  +---------------------------+
+                                  |      cpu_simulator_t      |
+                                  | (coordinator, clock, INI) |
+                                  +-------------+-------------+
+                                                |
+                     +--------------------------+--------------------------+
+                     |                                                     |
+                     v                                                     v
+       +----------------------------+                        +----------------------------+
+       |        cpu_core_t          |                        |    Memory & MMU Subsystem  |
+       |  Out-of-Order Core Pipeline|                        |                            |
+       |                            |                        | [L1I / L1D / L2 / L3 LLC]  |
+       |  1. Fetch & Branch Predict |                        |   (three_level_cache_t)    |
+       |  2. Decode & Rename/Deps   |                        |            ^               |
+       |  3. Dispatch (ROB, LSQ)    |                        |            | Coupling      |
+       |  4. Execute & Wrong-Path   |                        |            v               |
+       |  5. Commit (In-Order)      |                        | [ITLB / DTLB / L2 TLB]     |
+       +----------------------------+                        |            |               |
+                                                             |            v Miss          |
+                                                             |   [Page Table Walker (PTW)]|
+                                                             |            |               |
+                                                             |   [Page Walk Cache (PWC)]  |
+                                                             |   [4-Level Radix Table]    |
+                                                             +----------------------------+
+```
+
+### Layer 1: Simulation Coordinator & Architecture Configuration
+1. [`cpu_simulator.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/cpu_simulator.h) & [`cpu_simulator.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/cpu_simulator.cpp):
+   - **`cpu_simulator_knobs_t`**: Look here to see every configurable parameter (ROB size, queue sizes, latencies, sector size).
+   - **Constructor**: See lines `94–170` to understand how `page_table_walker_t`, `three_level_cache_t`, `itlbs_`, `dtlbs_`, `l2_tlbs_`, and `cores_` are wired together per core.
+   - **`process_memref()`**: The top-level ingestion method invoked for every dynamic instruction and memory reference.
+2. [`ini_parser.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/ini_parser.cpp):
+   - Inspect `ini_config_t::apply_to_knobs()` to see how profiles (`o3_default.ini`, `o3_sector.ini`, `o3_server.ini`) configure microarchitectural parameters.
+
+### Layer 2: Out-of-Order Core Pipeline
+1. [`cpu_core.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/cpu_core.h) & [`cpu_core.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/cpu_core.cpp):
+   - **`cpu_core_t::process_memref()`**: Follow the pipeline flow:
+     - **Fetch**: Routes PC through `itlb_` and L1I cache.
+     - **Branch Prediction**: Updates [`branch_predictor_t`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/btb.h); detects jumps and mispredictions.
+     - **Wrong-Path Execution**: [`speculative_wrong_path_engine_t`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/wrong_path.h) generates speculative instructions down the wrong path to warm up caches and TLBs.
+     - **Dispatch**: Checks capacity and reserves entries in `rob_` and `lsq_`.
+     - **Execution & Dependencies**: [`scoreboard_t`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/reg_deps.h) tracks RAW hazards and ready cycles.
+     - **Memory Access**: Dispatches loads and stores to the LSQ and data cache hierarchy.
+2. [`rob.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/rob.h) & [`rob.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/rob.cpp):
+   - Circular Reorder Buffer tracking instruction commit in program order and handling pipeline flushes.
+3. [`lsq.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/lsq.h) & [`lsq.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/lsq.cpp):
+   - In-flight Load and Store Queues implementing memory disambiguation and store-to-load forwarding.
+
+### Layer 3: TLB Hierarchy & Hardware Page Table Walker
+1. [`simulator/tlb.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/tlb.h) & [`simulator/tlb.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/tlb.cpp):
+   - **`tlb_t::request()`**: Handles fast-path hits, set-associative tag lookups, sub-entry validity checks, and miss forwarding from L1 TLBs to L2 TLB.
+   - **Sectored TLB**: Notice how `sector_size_` ($1, 2, 4, 8$) determines block size and sub-entry indexing.
+2. [`simulator/tlb_entry.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/tlb_entry.h):
+   - Inspect [`tlb_sub_entry_t`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/tlb_entry.h#L55) to see how per-PTE `valid`, `ppn`, and `dirty` bits are stored in each sector block.
+3. [`simulator/mmu/page_table_walker.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/mmu/page_table_walker.h) & [`simulator/mmu/page_table_walker.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/mmu/page_table_walker.cpp):
+   - **`walk()`**: Coordinates the 4-level radix walk.
+   - **`issue_pte_cache_read()`**: Crucial: Hardware walker reads are issued directly to the core's private L1D cache (and cascade to L2/L3/DRAM on misses).
+4. [`simulator/mmu/page_table.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/mmu/page_table.h) & [`simulator/mmu/page_table.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/mmu/page_table.cpp):
+   - **`walk_and_populate()`**: Models architectural x86-64 4-level tables (`PML4E` $\rightarrow$ `PDPTE` $\rightarrow$ `PDE` $\rightarrow$ `PTE`), huge pages (2 MB, 1 GB), and leaf sector pre-allocation with `external_v2p` (pagemap) validation.
+5. [`simulator/mmu/page_walk_cache.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/mmu/page_walk_cache.h):
+   - Models the hardware Page Walk Cache (PWC) caching intermediate directory translations (L4, L3, L2).
+
+### Layer 4: 3-Level Cache Hierarchy & Queues
+1. [`three_level_cache.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/three_level_cache.h) & [`three_level_cache.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/three_level_cache.cpp):
+   - Models private L1I, private L1D, private L2, and shared L3/LLC caches.
+2. [`mshr.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/mshr.h) & [`cache_queues.h`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/simulator/cpu/cache_queues.h):
+   - Manages non-blocking Miss Status Holding Registers (MSHRs), Read Queues (RQ), Write Queues (WQ), and write-coalescing.
+
+### Layer 5: Regression Unit Tests (Executable Documentation)
+The unit test suite provides isolated, readable test scenarios for every mechanism:
+- Open [`clients/drcachesim/tests/tlb_simulator_unit_test.cpp`](file:///media/pravesh/Storage/code/dyn/dynamorio/clients/drcachesim/tests/tlb_simulator_unit_test.cpp):
+  - **`unit_test_mmu_page_table_walker()`**: Full 4-level radix walks and demand faults.
+  - **`unit_test_pwc_caching()`**: Page Walk Cache skipping directory levels on adjacent accesses.
+  - **`unit_test_huge_pages()`**: 2 MB and 1 GB page detection and promotion.
+  - **`unit_test_wrong_path_speculation()`**: Speculative instruction fetch and load pollution.
+  - **`unit_test_mshr_queues_and_nested_ini()`**: MSHR allocations, secondary coalescing, and queue full stalls.
+  - **`unit_test_sector_l2_tlb()`**: Sectored L2 TLB geometry ($32 \times 6, 64 \times 6, 128 \times 6$), leaf PTE co-allocation, and pagemap invalid-slot handling.
+
+---
+
+## 6. Usage: Running Traces & Applications through the O3 Engine
+
+### 6.0 Fast Build Instructions (1 Command)
 
 You can compile the simulator and all unit tests in parallel in under 3 seconds:
 
@@ -316,6 +424,9 @@ int main() {
 | L2 Cache Size | `--l2_size <bytes>` | `-LL_size` | `262144` (256KB)| Private unified L2 Cache size. |
 | L3 / LLC Size | `--l3_size <bytes>` | `-L3_size` | `8388608` (8MB)| Shared unified Last-Level Cache size. |
 | PWC Entries | `--pwc_entries <N>` | `-TLB_pwc_entries` | `32` | Page Walk Cache entries per core. |
+| L2 TLB Entries | INI `entries` | `-TLB_L2_entries` | `1536` | Total Unified L2 TLB PTE entries. |
+| L2 TLB Assoc | INI `assoc` | `-TLB_L2_assoc` | `6` | Unified L2 TLB associativity (ways). |
+| L2 TLB Sector Size | INI `sector_size` | `-TLB_L2_sector_size` | `1` | Sector size: 1 (baseline: 256x6), 2, 4, 8 (32x6). |
 
 ---
 
