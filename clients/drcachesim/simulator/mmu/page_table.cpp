@@ -300,23 +300,45 @@ radix_page_table_t::walk_and_populate(
                     size_t cur_idx = base_idx + s;                                     // Target leaf entry index.
                     addr_t cur_vaddr = vaddr_base + static_cast<addr_t>(s) * 4096ULL;  // Virtual address of sub-entry.
                     page_table_entry_t &pte = cur_node->get_entry(cur_idx);             // Reference leaf PTE.
-                    // If sibling PTE in this sector is not yet present, allocate its physical frame.
-                    if (!pte.is_present()) {
-                        addr_t sib_frame = resolve_leaf_physical_frame(cur_vaddr, page_size_kind_t::PAGE_SIZE_4KB, external_v2p);
+                    bool is_demand_entry = (cur_idx == idx);                            // Check if this sub-entry is the demand page.
+                    bool has_valid_pfn = false;                                         // Track if sub-entry has a valid PFN.
+
+                    // Check whether this entry already has a valid physical mapping.
+                    if (pte.is_present()) {                                             // Check if PTE was already populated.
+                        has_valid_pfn = true;                                           // Already-present PTE has valid PFN.
+                    } else if (is_demand_entry) {                                       // Check if this is the demand entry.
+                        has_valid_pfn = true;                                           // Demand page is always materialized on miss.
+                    } else if (external_v2p != nullptr && !external_v2p->empty()) {     // Check if external pagemap map is provided.
+                        // Sibling entry: only valid if explicitly present in the external pagemap (Bit 63 == 1).
+                        addr_t sib_vpage_4kb = page_size_helper_t::align_to_page(cur_vaddr, page_size_kind_t::PAGE_SIZE_4KB); // Align to 4 KB.
+                        auto it_v2p = external_v2p->find(sib_vpage_4kb);                 // Lookup sibling page in pagemap table.
+                        if (it_v2p != external_v2p->end()) {                            // Sibling page was valid in pagemap!
+                            has_valid_pfn = true;                                       // Mark sibling PFN valid.
+                        } else {                                                        // Sibling was unmapped / invalid in pagemap!
+                            has_valid_pfn = false;                                      // Mark sibling sub-entry invalid.
+                        }
+                    } else {                                                            // No external pagemap (synthetic mode).
+                        has_valid_pfn = true;                                           // Eagerly synthesize sibling frame.
+                    }
+
+                    // If the entry has a valid PFN and is not yet mapped in the page table, allocate its frame.
+                    if (has_valid_pfn && !pte.is_present()) {                           // Check if frame allocation needed.
+                        addr_t sib_frame = resolve_leaf_physical_frame(cur_vaddr, page_size_kind_t::PAGE_SIZE_4KB, external_v2p); // Resolve frame.
                         pte.set_present(true);                                          // Mark sibling PTE present.
                         pte.set_writable(true);                                         // Mark sibling writable.
                         pte.set_user_accessible(true);                                  // Mark user accessible.
                         pte.set_huge_page(false);                                       // Standard 4 KB page.
                         pte.set_phys_addr(sib_frame);                                   // Store mapped frame address.
                     }
+
                     // Construct sector entry record.
-                    ptw_sector_entry_t s_ent;
-                    s_ent.valid = true;                                                 // Mark valid.
+                    ptw_sector_entry_t s_ent;                                            // Instantiate sector entry record.
+                    s_ent.valid = has_valid_pfn;                                        // Reflect valid/invalid PFN status.
                     s_ent.vaddr = cur_vaddr;                                            // Virtual page address.
-                    s_ent.paddr = pte.get_phys_addr();                                  // Physical frame address.
-                    s_ent.ppn = pte.get_phys_addr() >> 12;                              // Physical page number (PPN).
+                    s_ent.paddr = has_valid_pfn ? pte.get_phys_addr() : 0;              // Physical frame address (or 0 if invalid).
+                    s_ent.ppn = has_valid_pfn ? (pte.get_phys_addr() >> 12) : 0;        // PPN (or 0 if invalid).
                     s_ent.page_size_kind = page_size_kind_t::PAGE_SIZE_4KB;             // 4 KB page kind.
-                    s_ent.dirty = pte.is_dirty();                                       // Propagate dirty status.
+                    s_ent.dirty = has_valid_pfn ? pte.is_dirty() : false;               // Propagate dirty status if valid.
                     result_out->sector_entries.push_back(s_ent);                        // Append sector entry.
                 }
             } else if (result_out->sector_size > 1) {

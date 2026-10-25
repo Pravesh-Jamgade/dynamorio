@@ -233,12 +233,14 @@ tlb_t::request(const memref_t &memref_in)
                         typed_entry->sector_size_ = sector_size_;
                         for (size_t s = 0; s < sector_size_; ++s) {
                             if (s < ptw_res.sector_entries.size()) {
+                                // Install sub-entry using the valid bit determined from pagemap / PTW.
                                 typed_entry->set_sub_entry(
-                                    s, ptw_res.sector_entries[s].ppn,
+                                    s, ptw_res.sector_entries[s].valid,
+                                    ptw_res.sector_entries[s].ppn,
                                     ptw_res.sector_entries[s].page_size_kind,
                                     ptw_res.sector_entries[s].dirty);
                             } else {
-                                typed_entry->set_sub_entry(s, resolved_ppn + s, resolved_kind, false);
+                                typed_entry->set_sub_entry(s, true, resolved_ppn + s, resolved_kind, false);
                             }
                         }
                     }

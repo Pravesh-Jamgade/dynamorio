@@ -162,17 +162,26 @@ public:
     }
 
     /**
-     * @brief Installs translation data into a specific sub-entry slot.
+     * @brief Installs translation data into a specific sub-entry slot with explicit valid status.
+     */
+    void
+    set_sub_entry(size_t sub_idx, bool valid_val, addr_t ppn_val, page_size_kind_t kind_val, bool dirty_val)
+    {
+        if (sub_idx < MAX_TLB_SECTOR_SIZE) {                   // Check index within bounds.
+            sub_entries_[sub_idx].valid = valid_val;            // Set sub-entry valid status.
+            sub_entries_[sub_idx].ppn = ppn_val;               // Set physical page number.
+            sub_entries_[sub_idx].page_size_kind = kind_val;   // Set page size granularity.
+            sub_entries_[sub_idx].dirty = dirty_val;           // Set dirty bit status.
+        }
+    }
+
+    /**
+     * @brief Installs translation data into a specific sub-entry slot (default valid = true).
      */
     void
     set_sub_entry(size_t sub_idx, addr_t ppn_val, page_size_kind_t kind_val, bool dirty_val)
     {
-        if (sub_idx < MAX_TLB_SECTOR_SIZE) {               // Check index within bounds.
-            sub_entries_[sub_idx].valid = true;            // Mark sub-entry valid.
-            sub_entries_[sub_idx].ppn = ppn_val;           // Set physical page number.
-            sub_entries_[sub_idx].page_size_kind = kind_val; // Set page size granularity.
-            sub_entries_[sub_idx].dirty = dirty_val;       // Set dirty bit status.
-        }
+        set_sub_entry(sub_idx, true, ppn_val, kind_val, dirty_val); // Delegate with valid=true.
     }
 };
 

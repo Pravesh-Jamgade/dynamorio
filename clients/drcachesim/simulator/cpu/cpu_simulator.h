@@ -268,6 +268,15 @@ public:
     }
 
     /**
+     * @brief Returns a pointer to the shared MMU address space manager.
+     */
+    mmu_address_space_manager_t *
+    get_address_space_manager() const
+    {
+        return address_space_mgr_.get(); // Return address space manager pointer.
+    }
+
+    /**
      * @brief Returns the configuration knobs.
      */
     const cpu_simulator_knobs_t &

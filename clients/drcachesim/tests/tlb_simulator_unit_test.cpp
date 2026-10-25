@@ -1627,7 +1627,37 @@ unit_test_sector_l2_tlb()
     assert(l2_tlb->get_stats()->get_metric(metric_name_t::HITS) == 8);              // Hit count becomes 8!
     assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == 2);            // Miss count remains 2!
 
-    // 3. Test Loading configs/o3_sector.ini via ini_config_t.
+    // 3. Test Invalid PTE handling in Sectored TLB using an external pagemap (v2p) map.
+    // In this scenario:
+    // - Sector base is 0x610000 (pages 0..7).
+    // - In external_v2p: page 0 (0x610000) and page 1 (0x611000) have valid PFNs.
+    // - Sibling page 2 (0x612000) is NOT in external_v2p (unmapped / invalid in pagemap).
+    std::unordered_map<addr_t, addr_t> sample_v2p;                                  // Instantiate pagemap table.
+    sample_v2p[0x610000] = 0x1055000;                                               // Page 0 valid PFN 0x1055 (4KB page).
+    sample_v2p[0x611000] = 0x2099000;                                               // Page 1 valid PFN 0x2099 (4KB page).
+    // 0x612000 is intentionally omitted to simulate an unmapped/invalid PTE!
+    sim.get_address_space_manager()->load_external_v2p_map(pid, sample_v2p);        // Load pagemap into MMU.
+
+    int64_t misses_before = l2_tlb->get_stats()->get_metric(metric_name_t::MISSES); // Initial misses.
+    int64_t hits_before = l2_tlb->get_stats()->get_metric(metric_name_t::HITS);     // Initial hits.
+
+    // Access page 0 (0x610000): compulsory miss. Walker installs sector 0x610000:
+    // Sub-entry 0 (0x610000) is VALID (demand page).
+    // Sub-entry 1 (0x611000) is VALID (found in pagemap).
+    // Sub-entry 2 (0x612000) is INVALID (absent from pagemap).
+    assert(sim.process_memref(generate_mem_ref(0x610000, 0x610000, pid, 1, TRACE_TYPE_INSTR))); // Access page 0.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == misses_before + 1); // Recorded 1 miss.
+
+    // Access page 1 (0x611000): sibling was valid in pagemap, must HIT in L2 TLB!
+    assert(sim.process_memref(generate_mem_ref(0x611000, 0x611000, pid, 1, TRACE_TYPE_INSTR))); // Access sibling 1.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::HITS) == hits_before + 1);    // Recorded 1 hit!
+
+    // Access page 2 (0x612000): sibling was absent from pagemap (invalid PTE)!
+    // Must MISS in L2 TLB despite sector tag already being cached!
+    assert(sim.process_memref(generate_mem_ref(0x612000, 0x612000, pid, 1, TRACE_TYPE_INSTR))); // Access invalid sibling 2.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == misses_before + 2); // Recorded 2nd miss!
+
+    // 4. Test Loading configs/o3_sector.ini via ini_config_t.
     ini_config_t sector_config;                                                     // Instantiate INI parser.
     assert(sector_config.load("configs/o3_sector.ini"));                            // Load and parse o3_sector.ini.
     cpu_simulator_knobs_t parsed_knobs;                                             // Simulator knobs destination.
@@ -1638,7 +1668,7 @@ unit_test_sector_l2_tlb()
     assert(parsed_knobs.l2_tlb_entries == 1536);                                    // Verify entries = 1536.
     assert(parsed_knobs.l2_tlb_assoc == 6);                                         // Verify assoc = 6.
 
-    // 4. Verify results print cleanly.
+    // 5. Verify results print cleanly.
     assert(sim.print_results());                                                    // Verify results print cleanly.
 }
 
