@@ -271,30 +271,17 @@ run_single_benchmark() {
     # Compute wall-clock elapsed time in seconds.
     local elapsed=$(( end_time - start_time ))
 
-    # Format elapsed duration into human-friendly string.
+    # Format elapsed duration strictly as hr:m:s (HH:MM:SS).
     local dur_str
-    # Check if duration spans an hour or more.
-    if (( elapsed >= 3600 )); then
-        # Format as Xh Ym Zs.
-        dur_str="$(( elapsed / 3600 ))h $(( (elapsed % 3600) / 60 ))m $(( elapsed % 60 ))s"
-    # Check if duration spans a minute or more.
-    elif (( elapsed >= 60 )); then
-        # Format as Xm Ys.
-        dur_str="$(( elapsed / 60 ))m $(( elapsed % 60 ))s"
-    # Otherwise format in seconds.
-    else
-        # Format as Xs.
-        dur_str="${elapsed}s"
-    fi
+    # Calculate hours, minutes, and seconds formatted with two digits each.
+    dur_str="$(printf "%02d:%02d:%02d" $(( elapsed / 3600 )) $(( (elapsed % 3600) / 60 )) $(( elapsed % 60 )))"
 
     # Append completion metrics to the stats file if it exists.
     if [[ -f "$stats_file" ]]; then
         # Append completion timestamp.
         echo "completion_time, ${completion_time_str}" >> "$stats_file"
-        # Append duration in seconds.
-        echo "duration_seconds, ${elapsed}" >> "$stats_file"
-        # Append formatted duration.
-        echo "duration_formatted, ${dur_str}" >> "$stats_file"
+        # Append duration formatted as hr:m:s.
+        echo "duration, ${dur_str}" >> "$stats_file"
     fi
 
     # Append complete timing summary block to the console log.
@@ -309,16 +296,16 @@ run_single_benchmark() {
         echo " Started At:       ${start_time_str}"
         # Write completion timestamp.
         echo " Completed At:     ${completion_time_str}"
-        # Write total duration.
-        echo " Total Duration:   ${dur_str} (${elapsed} seconds)"
+        # Write duration strictly as hr:m:s.
+        echo " Duration:         ${dur_str}"
         # Write separator.
         echo "================================================================================"
     } >> "$console_log"
 
     # Print completion status with timestamp.
     echo "--------------------------------------------------------------------------------"
-    # Print completion timestamp and duration.
-    echo " [DONE] Completed ${name} (${MODE}) at ${completion_time_str} (Duration: ${dur_str} / ${elapsed}s)."
+    # Print completion timestamp and duration strictly as hr:m:s.
+    echo " [DONE] Completed ${name} (${MODE}) at ${completion_time_str} (Duration: ${dur_str})."
     # Print separator.
     echo "--------------------------------------------------------------------------------"
     # Print newline.

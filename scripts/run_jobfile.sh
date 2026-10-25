@@ -190,8 +190,8 @@ print_summary_table() {
         comp_time="$(awk -F', *' '$1=="completion_time" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
         # Extract formatted duration from stats file if present.
         local comp_dur
-        # Read duration_formatted entry.
-        comp_dur="$(awk -F', *' '$1=="duration_formatted" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
+        # Read duration entry in hr:m:s format (or duration_formatted fallback).
+        comp_dur="$(awk -F', *' '$1=="duration" || $1=="duration_formatted" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
 
         # Extract scalar metrics using awk.
         local retired
@@ -281,21 +281,10 @@ execute_job() {
     # Compute elapsed seconds.
     local dur=$(( t_end - t_start ))
 
-    # Format elapsed duration into human-friendly string (hours, minutes, seconds).
+    # Format elapsed duration strictly as hr:m:s (HH:MM:SS).
     local dur_str
-    # Check if duration spans an hour or more.
-    if (( dur >= 3600 )); then
-        # Format as Xh Ym Zs.
-        dur_str="$(( dur / 3600 ))h $(( (dur % 3600) / 60 ))m $(( dur % 60 ))s"
-    # Check if duration spans a minute or more.
-    elif (( dur >= 60 )); then
-        # Format as Xm Ys.
-        dur_str="$(( dur / 60 ))m $(( dur % 60 ))s"
-    # Otherwise format in seconds only.
-    else
-        # Format as Xs.
-        dur_str="${dur}s"
-    fi
+    # Calculate hours, minutes, and seconds formatted with two digits each.
+    dur_str="$(printf "%02d:%02d:%02d" $(( dur / 3600 )) $(( (dur % 3600) / 60 )) $(( dur % 60 )))"
 
     # Append complete timing summary block to the job's console log.
     {
@@ -309,8 +298,8 @@ execute_job() {
         echo " Started At:        ${start_time_str}"
         # Write completion timestamp.
         echo " Completed At:      ${completion_time_str}"
-        # Write formatted elapsed duration.
-        echo " Elapsed Duration:  ${dur_str} (${dur} seconds)"
+        # Write duration strictly as hr:m:s.
+        echo " Duration:          ${dur_str}"
         # Write process exit code.
         echo " Exit Code:         ${ret}"
         # Write footer line.
@@ -325,19 +314,17 @@ execute_job() {
     if [[ -n "$sfile_match" && -f "$sfile_match" ]]; then
         # Append completion timestamp to the CSV statistics file.
         echo "completion_time, ${completion_time_str}" >> "$sfile_match"
-        # Append elapsed seconds to the CSV statistics file.
-        echo "duration_seconds, ${dur}" >> "$sfile_match"
-        # Append formatted human-readable duration to the CSV statistics file.
-        echo "duration_formatted, ${dur_str}" >> "$sfile_match"
+        # Append duration formatted as hr:m:s to the CSV statistics file.
+        echo "duration, ${dur_str}" >> "$sfile_match"
     fi
 
     # Check return code.
     if [[ $ret -eq 0 ]]; then
-        # Print completion message with completion timestamp and duration.
-        echo "[DONE]  [${completion_time_str}] Job #${line_num} (${app_name}) completed successfully in ${dur_str} (${dur}s). (Log: ${console_log})"
+        # Print completion message displaying duration strictly as hr:m:s.
+        echo "[DONE]  [${completion_time_str}] Job #${line_num} (${app_name}) completed successfully in ${dur_str}. (Log: ${console_log})"
     else
-        # Print failure warning with completion timestamp and duration.
-        echo "[FAIL]  [${completion_time_str}] Job #${line_num} (${app_name}) failed with exit code ${ret} at ${completion_time_str} after ${dur_str} (${dur}s). (Log: ${console_log})" >&2
+        # Print failure warning displaying duration strictly as hr:m:s.
+        echo "[FAIL]  [${completion_time_str}] Job #${line_num} (${app_name}) failed with exit code ${ret} after ${dur_str}. (Log: ${console_log})" >&2
     fi
 }
 
