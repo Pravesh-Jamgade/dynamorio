@@ -1559,6 +1559,89 @@ unit_test_mshr_queues_and_nested_ini()
     remove(child_ini.c_str());
 }
 
+// Test 15: Sectored L2 TLB Geometry (32x6, 64x6, 128x6), Leaf Block Co-Allocation & INI Configuration.
+static void
+unit_test_sector_l2_tlb()
+{
+    // 1. Verify Sector Geometry Calculations: total PTE entries remains constant at 1536.
+    const unsigned int baseline_entries = 1536;                                     // Total PTE capacity.
+    const unsigned int assoc = 6;                                                   // 6-way associativity.
+
+    // Baseline (sector=1): 256 sets x 6 ways = 1536 entries.
+    unsigned int sets_s1 = baseline_entries / (1 * assoc);                          // 1536 / 6 = 256 sets.
+    assert(sets_s1 == 256);                                                         // Verify 256x6 baseline.
+
+    // Sector=2: 128 sets x 6 ways (768 sector blocks x 2 PTEs = 1536 entries).
+    unsigned int sets_s2 = baseline_entries / (2 * assoc);                          // 1536 / 12 = 128 sets.
+    assert(sets_s2 == 128);                                                         // Verify 128x6.
+
+    // Sector=4: 64 sets x 6 ways (384 sector blocks x 4 PTEs = 1536 entries).
+    unsigned int sets_s4 = baseline_entries / (4 * assoc);                          // 1536 / 24 = 64 sets.
+    assert(sets_s4 == 64);                                                          // Verify 64x6.
+
+    // Sector=8: 32 sets x 6 ways (192 sector blocks x 8 PTEs = 1536 entries).
+    unsigned int sets_s8 = baseline_entries / (8 * assoc);                          // 1536 / 48 = 32 sets.
+    assert(sets_s8 == 32);                                                          // Verify 32x6.
+
+    // 2. Functional Verification of Sector=8: Leaf PTE block pre-allocation (0..7 sharing entry_offset / 8).
+    cpu_simulator_knobs_t knobs;                                                    // Instantiate configuration knobs.
+    knobs.num_cores = 1;                                                            // Single CPU core.
+    knobs.enable_wrong_path = false;                                                // Disable speculative wrong-path for deterministic test.
+    knobs.l2_tlb_entries = 1536;                                                    // 1536 total PTE capacity.
+    knobs.l2_tlb_assoc = 6;                                                         // 6-way associativity.
+    knobs.l2_tlb_sector_size = 8;                                                   // Sector size = 8 (32 sets x 6 ways).
+
+    cpu_simulator_t sim(knobs);                                                     // Instantiate O3 CPU simulator.
+    const memref_pid_t pid = 7777;                                                  // Test process identifier.
+
+    // Access page 0 (vaddr = 0x400000, leaf entry_offset = 0).
+    // This is a cold miss: triggers 1 page table walk and places all 8 PTEs (0..7) into the sector block.
+    assert(sim.process_memref(generate_mem_ref(0x400000, 0x400000, pid, 1, TRACE_TYPE_INSTR))); // Access page 0.
+
+    // Query core 0's L2 TLB.
+    tlb_t *l2_tlb = sim.get_l2_tlb(0);                                              // Retrieve L2 TLB pointer.
+    assert(l2_tlb != nullptr);                                                       // Verify non-null.
+    assert(l2_tlb->get_sector_size() == 8);                                         // Verify sector size is 8.
+    // L2 TLB must record 1 compulsory miss on page 0.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == 1);            // Verify 1 miss.
+
+    // Access pages 1 through 7 (vaddrs 0x401000 through 0x407000).
+    // These share entry_offset / 8 == 0 with page 0 and were co-allocated into the same sector!
+    for (int p = 1; p < 8; ++p) {                                                   // Iterate sibling pages 1..7.
+        addr_t vaddr = 0x400000ULL + static_cast<addr_t>(p) * 4096ULL;              // Compute sibling page address.
+        assert(sim.process_memref(generate_mem_ref(vaddr, vaddr, pid, 1, TRACE_TYPE_INSTR))); // Access sibling page.
+    }
+
+    // All sibling accesses 1..7 must HIT in the L2 TLB without page table walks!
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::HITS) == 7);              // Verify exactly 7 L2 TLB hits!
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == 1);            // Miss count remains 1!
+
+    // Access page 8 (vaddr = 0x408000, leaf entry_offset = 8, entry_offset / 8 == 1).
+    // This belongs to the next sector: triggers a 2nd miss and co-allocates pages 8..15.
+    assert(sim.process_memref(generate_mem_ref(0x408000, 0x408000, pid, 1, TRACE_TYPE_INSTR))); // Access page 8.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == 2);            // Miss count becomes 2.
+
+    // Access page 9 (vaddr = 0x409000, leaf entry_offset = 9, entry_offset / 8 == 1).
+    // This is a sibling in sector 1: must HIT!
+    assert(sim.process_memref(generate_mem_ref(0x409000, 0x409000, pid, 1, TRACE_TYPE_INSTR))); // Access page 9.
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::HITS) == 8);              // Hit count becomes 8!
+    assert(l2_tlb->get_stats()->get_metric(metric_name_t::MISSES) == 2);            // Miss count remains 2!
+
+    // 3. Test Loading configs/o3_sector.ini via ini_config_t.
+    ini_config_t sector_config;                                                     // Instantiate INI parser.
+    assert(sector_config.load("configs/o3_sector.ini"));                            // Load and parse o3_sector.ini.
+    cpu_simulator_knobs_t parsed_knobs;                                             // Simulator knobs destination.
+    sector_config.apply_to_knobs(parsed_knobs);                                     // Apply configuration.
+
+    // Verify parsed sector parameters match specification.
+    assert(parsed_knobs.l2_tlb_sector_size == 8);                                   // Verify sector_size = 8.
+    assert(parsed_knobs.l2_tlb_entries == 1536);                                    // Verify entries = 1536.
+    assert(parsed_knobs.l2_tlb_assoc == 6);                                         // Verify assoc = 6.
+
+    // 4. Verify results print cleanly.
+    assert(sim.print_results());                                                    // Verify results print cleanly.
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1593,6 +1676,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_champsim_and_cloudsuite_reader();
     // Run MSHR, Cache Queues, and Nested INI Parser unit test.
     unit_test_mshr_queues_and_nested_ini();
+    // Run Sectored L2 TLB (32x6, 64x6, 128x6), Leaf Block Co-Allocation & INI Configuration unit test.
+    unit_test_sector_l2_tlb();
 }
 
 } // namespace drmemtrace

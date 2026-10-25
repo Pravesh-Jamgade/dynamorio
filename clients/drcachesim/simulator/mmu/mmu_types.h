@@ -469,6 +469,18 @@ struct ptw_step_record_t {
 };
 
 /**
+ * @brief Represents an individual sector entry populated during a page table walk.
+ */
+struct ptw_sector_entry_t {
+    bool valid = false;                                                // Whether this sector entry is valid.
+    addr_t vaddr = 0;                                                  // Virtual address for this page.
+    addr_t paddr = 0;                                                  // Physical frame address for this page.
+    addr_t ppn = 0;                                                    // Physical page number (paddr >> 12).
+    page_size_kind_t page_size_kind = page_size_kind_t::PAGE_SIZE_4KB; // Page size granularity.
+    bool dirty = false;                                                // Hardware dirty bit status.
+};
+
+/**
  * @brief Captures the complete outcome of a hardware page table walk for a memref.
  */
 struct ptw_result_t {
@@ -484,6 +496,8 @@ struct ptw_result_t {
     ptw_level_t pwc_hit_level = ptw_level_t::PTW_LEVEL_INVALID; // Highest level hit in PWC.
     int num_memory_reads = 0;    // Number of 8-byte PTE memory reads issued to cache/mem.
     std::vector<ptw_step_record_t> steps; // Ordered sequence of radix walk steps.
+    size_t sector_size = 1;      // Sector size (1 = baseline, 2, 4, or 8 PTEs).
+    std::vector<ptw_sector_entry_t> sector_entries; // Populated sector entries for L2 TLB fill.
 };
 
 } // namespace drmemtrace

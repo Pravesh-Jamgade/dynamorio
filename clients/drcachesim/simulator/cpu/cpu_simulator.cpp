@@ -103,8 +103,25 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         dtlbs_[i].reset(new tlb_t());
         l2_tlbs_[i].reset(new tlb_t());
 
+        // Compute L2 TLB sector geometry:
+        // Total PTE entries remains constant between baseline and sector modes.
+        // Baseline (sector=1): 256 sets x 6 ways = 1536 entries.
+        // Sector=2: 128 sets x 6 ways (768 blocks, 2 PTEs per block = 1536 entries).
+        // Sector=4: 64 sets x 6 ways (384 blocks, 4 PTEs per block = 1536 entries).
+        // Sector=8: 32 sets x 6 ways (192 blocks, 8 PTEs per block = 1536 entries).
+        unsigned int sector = (knobs_.l2_tlb_sector_size > 0) ? knobs_.l2_tlb_sector_size : 1; // Effective sector size.
+        unsigned int l2_assoc = (knobs_.l2_tlb_assoc > 0) ? knobs_.l2_tlb_assoc : 6;           // L2 TLB associativity.
+        unsigned int l2_total_entries = (knobs_.l2_tlb_entries > 0) ? knobs_.l2_tlb_entries : 1536; // Total entries.
+        unsigned int l2_num_blocks = l2_total_entries / sector;                                 // Number of sector blocks.
+        unsigned int l2_block_size = static_cast<unsigned int>(knobs_.page_size * sector);      // Block size in bytes.
+
+        // Configure walker sector size so leaf walks fetch full sector chunks into cache.
+        walkers_[i]->set_sector_size(sector);
+
+        // Configure L2 TLB sector size.
+        l2_tlbs_[i]->set_sector_size(sector);
         // Initialize L2 TLB and attach the hardware Page Table Walker.
-        l2_tlbs_[i]->init(4, static_cast<int>(knobs_.page_size), 512, nullptr,
+        l2_tlbs_[i]->init(l2_assoc, static_cast<int>(l2_block_size), l2_num_blocks, nullptr,
                           new tlb_stats_t(static_cast<int>(knobs_.page_size)));
         l2_tlbs_[i]->set_page_table_walker(walkers_[i].get());
 
@@ -473,6 +490,13 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "L2TLB misses, " << total_l2tlb_misses << "\n";                           // Output L2TLB misses.
     os << "L2TLB compulsory misses, " << total_l2tlb_comp_misses << "\n";           // Output L2TLB compulsory misses.
     os << "L2TLB miss rate, " << l2tlb_miss_rate << "\n";                           // Output L2TLB miss rate.
+    os << "L2TLB sector size, " << knobs_.l2_tlb_sector_size << "\n";               // Output L2TLB sector size.
+    os << "L2TLB total entries, " << knobs_.l2_tlb_entries << "\n";                 // Output total PTE entries.
+    os << "L2TLB associativity, " << knobs_.l2_tlb_assoc << "\n";                   // Output L2TLB associativity.
+    unsigned int l2_sets_stat = (knobs_.l2_tlb_sector_size > 0 && knobs_.l2_tlb_assoc > 0) // Calculate set count.
+        ? (knobs_.l2_tlb_entries / (knobs_.l2_tlb_sector_size * knobs_.l2_tlb_assoc)) // Sets = entries / (sector * assoc).
+        : 256;                                                                      // Fallback default sets.
+    os << "L2TLB sets, " << l2_sets_stat << "\n";                                   // Output L2TLB set count.
 
     // MMU and Page Table Walker metrics.
     if (!walkers_.empty() && walkers_[0] != nullptr) {
@@ -568,7 +592,11 @@ cpu_simulator_t::print_results()
         if (i < dtlbs_.size() && dtlbs_[i] != nullptr && dtlbs_[i]->get_stats() != nullptr) { // Check valid DTLB.
             dtlbs_[i]->get_stats()->print_stats("    ");                                   // Print DTLB stats.
         }
-        std::cerr << "  Core #" << i << " Unified L2 TLB stats:\n";                       // Core L2 TLB header.
+        unsigned int l2_sets_disp = (knobs_.l2_tlb_sector_size > 0 && knobs_.l2_tlb_assoc > 0) // Calculate set count.
+            ? (knobs_.l2_tlb_entries / (knobs_.l2_tlb_sector_size * knobs_.l2_tlb_assoc)) // Sets = entries / (sector * assoc).
+            : 256;                                                                          // Fallback default sets.
+        std::cerr << "  Core #" << i << " Unified L2 TLB (Sector=" << knobs_.l2_tlb_sector_size // Output sector header.
+                  << ", Geometry=" << l2_sets_disp << "x" << knobs_.l2_tlb_assoc << ") stats:\n"; // Output geometry.
         if (i < l2_tlbs_.size() && l2_tlbs_[i] != nullptr && l2_tlbs_[i]->get_stats() != nullptr) { // Check valid L2TLB.
             l2_tlbs_[i]->get_stats()->print_stats("    ");                                 // Print L2 TLB stats.
         }

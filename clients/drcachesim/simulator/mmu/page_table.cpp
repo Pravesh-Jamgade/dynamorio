@@ -209,8 +209,12 @@ radix_page_table_t::walk_and_populate(
     if (result_out == nullptr) {
         return false;
     }
+    // Preserve configured sector size before resetting output structure.
+    size_t req_sector_size = result_out->sector_size;
     // Reset the output walk result fields.
     *result_out = ptw_result_t();
+    // Restore preserved sector size.
+    result_out->sector_size = req_sector_size;
     result_out->pid = pid_;
     result_out->virt_addr = vaddr;
     // Query the huge page detector (if provided) for the page granularity of `vaddr`.
@@ -283,6 +287,52 @@ radix_page_table_t::walk_and_populate(
             result_out->phys_addr = entry.get_phys_addr() + page_offset;
             result_out->is_page_fault = faulted;
             result_out->success = true;
+
+            // When sector mode is active (sector_size > 1) and terminal leaf is 4 KB:
+            // Fetch/populate all `sector_size` PTEs from the leaf node that share `entry_offset / sector_size`.
+            if (result_out->sector_size > 1 && leaf_kind == page_size_kind_t::PAGE_SIZE_4KB) {
+                // Compute base index in the leaf table: entries with identical entry_offset / sector_size.
+                size_t base_idx = (idx / result_out->sector_size) * result_out->sector_size;
+                // Compute sector-aligned virtual base address.
+                addr_t vaddr_base = (vaddr & ~((static_cast<addr_t>(result_out->sector_size) * 4096ULL) - 1ULL));
+                // Iterate across all sub-entries within the sector (2, 4, or 8).
+                for (size_t s = 0; s < result_out->sector_size; ++s) {
+                    size_t cur_idx = base_idx + s;                                     // Target leaf entry index.
+                    addr_t cur_vaddr = vaddr_base + static_cast<addr_t>(s) * 4096ULL;  // Virtual address of sub-entry.
+                    page_table_entry_t &pte = cur_node->get_entry(cur_idx);             // Reference leaf PTE.
+                    // If sibling PTE in this sector is not yet present, allocate its physical frame.
+                    if (!pte.is_present()) {
+                        addr_t sib_frame = resolve_leaf_physical_frame(cur_vaddr, page_size_kind_t::PAGE_SIZE_4KB, external_v2p);
+                        pte.set_present(true);                                          // Mark sibling PTE present.
+                        pte.set_writable(true);                                         // Mark sibling writable.
+                        pte.set_user_accessible(true);                                  // Mark user accessible.
+                        pte.set_huge_page(false);                                       // Standard 4 KB page.
+                        pte.set_phys_addr(sib_frame);                                   // Store mapped frame address.
+                    }
+                    // Construct sector entry record.
+                    ptw_sector_entry_t s_ent;
+                    s_ent.valid = true;                                                 // Mark valid.
+                    s_ent.vaddr = cur_vaddr;                                            // Virtual page address.
+                    s_ent.paddr = pte.get_phys_addr();                                  // Physical frame address.
+                    s_ent.ppn = pte.get_phys_addr() >> 12;                              // Physical page number (PPN).
+                    s_ent.page_size_kind = page_size_kind_t::PAGE_SIZE_4KB;             // 4 KB page kind.
+                    s_ent.dirty = pte.is_dirty();                                       // Propagate dirty status.
+                    result_out->sector_entries.push_back(s_ent);                        // Append sector entry.
+                }
+            } else if (result_out->sector_size > 1) {
+                // For huge page leaf (2 MB or 1 GB), all sector sub-entries share the huge frame.
+                addr_t vaddr_base = (vaddr & ~((static_cast<addr_t>(result_out->sector_size) * 4096ULL) - 1ULL));
+                for (size_t s = 0; s < result_out->sector_size; ++s) {
+                    ptw_sector_entry_t s_ent;
+                    s_ent.valid = true;                                                 // Mark valid.
+                    s_ent.vaddr = vaddr_base + static_cast<addr_t>(s) * 4096ULL;        // Virtual page address.
+                    s_ent.paddr = entry.get_phys_addr() + static_cast<addr_t>(s) * 4096ULL; // Linear offset frame.
+                    s_ent.ppn = s_ent.paddr >> 12;                                      // Physical page number.
+                    s_ent.page_size_kind = leaf_kind;                                   // Huge page granularity.
+                    s_ent.dirty = entry.is_dirty();                                     // Propagate dirty status.
+                    result_out->sector_entries.push_back(s_ent);                        // Append sector entry.
+                }
+            }
             return true;
         }
         // Intermediate level: check if the child page table node already exists.

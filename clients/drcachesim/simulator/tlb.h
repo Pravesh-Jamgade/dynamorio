@@ -112,6 +112,24 @@ public:
     }
 
     /**
+     * @brief Configures the sector size for this TLB (1 = baseline non-sectored, 2, 4, 8).
+     */
+    void
+    set_sector_size(size_t sector_size)
+    {
+        sector_size_ = (sector_size > 0) ? sector_size : 1; // Store sector size.
+    }
+
+    /**
+     * @brief Returns the configured sector size for this TLB.
+     */
+    size_t
+    get_sector_size() const
+    {
+        return sector_size_; // Return sector size.
+    }
+
+    /**
      * @brief Checks whether this TLB (or any child TLB) holds an entry matching
      *        both `tag` and `pid` (resolving i#4816).
      */
@@ -182,6 +200,8 @@ protected:
     page_table_walker_t *page_table_walker_;
     // Optional huge-page detector for 2 MB / 1 GB canonical tag alignment.
     const huge_page_detector_t *huge_page_detector_;
+    // Configured sector size (1 = baseline, 2, 4, 8 PTEs per sector block).
+    size_t sector_size_ = 1;
 };
 
 /**

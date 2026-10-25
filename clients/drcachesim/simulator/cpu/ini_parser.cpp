@@ -415,6 +415,19 @@ ini_config_t::apply_to_knobs(cpu_simulator_knobs_t &knobs) const
     knobs.pwc_assoc = get_uint64(mmu_sec, "pwc_assoc", knobs.pwc_assoc);
     knobs.page_size = get_bytesize(mmu_sec, "page_size", knobs.page_size);
 
+    // [l2_tlb] or [mmu] L2 TLB sector parameters.
+    std::string l2_tlb_sec = has_section("l2_tlb") ? "l2_tlb" : (has_section("l2tlb") ? "l2tlb" : mmu_sec); // Section.
+    knobs.l2_tlb_entries = get_uint64(l2_tlb_sec, "entries",
+                               get_uint64(mmu_sec, "l2_tlb_entries",
+                               get_uint64(l2_tlb_sec, "l2_tlb_entries", knobs.l2_tlb_entries))); // Total entries.
+    knobs.l2_tlb_assoc = get_uint64(l2_tlb_sec, "assoc",
+                             get_uint64(mmu_sec, "l2_tlb_assoc",
+                             get_uint64(l2_tlb_sec, "l2_tlb_assoc", knobs.l2_tlb_assoc))); // Associativity.
+    knobs.l2_tlb_sector_size = get_uint64(l2_tlb_sec, "sector_size",
+                                   get_uint64(mmu_sec, "l2_tlb_sector_size",
+                                   get_uint64(l2_tlb_sec, "sector",
+                                   get_uint64(mmu_sec, "sector", knobs.l2_tlb_sector_size)))); // Sector size.
+
     // [memory] section parameters.
     std::string mem_sec = "memory";
     knobs.dram_latency = get_uint64(mem_sec, "dram_latency", knobs.dram_latency);

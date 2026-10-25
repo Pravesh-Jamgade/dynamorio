@@ -54,7 +54,9 @@ tlb_t::init_blocks()
 {
     // Allocate a tlb_entry_t object for every slot across all sets and ways.
     for (int i = 0; i < num_blocks_; i++) {
-        blocks_[i] = new tlb_entry_t; // Instantiate extended TLB entry block.
+        tlb_entry_t *entry = new tlb_entry_t; // Instantiate extended TLB entry block.
+        entry->sector_size_ = sector_size_;   // Propagate configured sector size to block.
+        blocks_[i] = entry;                   // Assign entry to block slot.
     }
 }
 
@@ -101,27 +103,33 @@ tlb_t::request(const memref_t &memref_in)
     addr_t tag = compute_canonical_tag(pid, start_addr, &start_kind, &start_page_bytes);
     addr_t final_tag = compute_canonical_tag(pid, final_addr, nullptr, nullptr);
 
+    // Compute sub-entry index within sector for start address.
+    size_t fast_sub_idx = (sector_size_ > 1) ? ((start_addr >> 12) & (sector_size_ - 1)) : 0;
+
     // Optimization: fast-path repeated single-page accesses to the same (tag, pid).
     if (tag == final_tag && tag == last_tag_ && pid == last_pid_) {
         // Retrieve the cached block from the last accessed set and way.
         caching_device_block_t *tlb_entry =
             &get_caching_device_block(last_block_idx_, last_way_);
-        assert(tag != TAG_INVALID && tag == tlb_entry->tag_ &&
-               pid == ((tlb_entry_t *)tlb_entry)->pid_);
-        // If this access is a write, mark the TLB entry dirty.
-        if (memref_in.data.type == TRACE_TYPE_WRITE) {
-            ((tlb_entry_t *)tlb_entry)->dirty_ = true;
+        tlb_entry_t *typed_fast = (tlb_entry_t *)tlb_entry;
+        // Verify entry tag matches, PID matches, and sector sub-entry is valid.
+        if (tag != TAG_INVALID && tag == tlb_entry->tag_ && pid == typed_fast->pid_ &&
+            typed_fast->is_sub_entry_valid(fast_sub_idx)) {
+            // If this access is a write, mark the TLB entry dirty.
+            if (memref_in.data.type == TRACE_TYPE_WRITE) {
+                typed_fast->set_sub_entry_dirty(fast_sub_idx, true);
+            }
+            // Record the access hit in base stats and TLB page-size stats.
+            record_access_stats(memref_in, true /*hit*/, tlb_entry);
+            if (stats_ != nullptr) {
+                ((tlb_stats_t *)stats_)
+                    ->record_page_size_access(typed_fast->get_sub_entry_kind(fast_sub_idx),
+                                              true /*hit*/);
+            }
+            // Update replacement policy state (e.g., LFU counter or LRU age).
+            access_update(last_block_idx_, last_way_);
+            return;
         }
-        // Record the access hit in base stats and TLB page-size stats.
-        record_access_stats(memref_in, true /*hit*/, tlb_entry);
-        if (stats_ != nullptr) {
-            ((tlb_stats_t *)stats_)
-                ->record_page_size_access(((tlb_entry_t *)tlb_entry)->page_size_kind_,
-                                          true /*hit*/);
-        }
-        // Update replacement policy state (e.g., LFU counter or LRU age).
-        access_update(last_block_idx_, last_way_);
-        return;
     }
 
     // Make a mutable copy of `memref_in` to slice across page boundaries if needed.
@@ -146,21 +154,27 @@ tlb_t::request(const memref_t &memref_in)
         // Compute the set start index for `cur_tag`.
         int block_idx = compute_block_idx(cur_tag);
         int way = 0;
+        // Compute sub-entry index for current page address.
+        size_t cur_sub_idx = (sector_size_ > 1) ? ((cur_addr >> 12) & (sector_size_ - 1)) : 0;
         // Scan all ways in the set for a valid entry matching (cur_tag, pid).
         for (way = 0; way < associativity_; ++way) {
             caching_device_block_t *tlb_entry = &get_caching_device_block(block_idx, way);
-            if (tlb_entry->tag_ == cur_tag &&
-                ((tlb_entry_t *)tlb_entry)->pid_ == pid) {
+            tlb_entry_t *typed_entry = (tlb_entry_t *)tlb_entry;
+            if (tlb_entry->tag_ == cur_tag && typed_entry->pid_ == pid) {
+                // If sectored TLB, verify specific sub-entry is valid.
+                if (sector_size_ > 1 && !typed_entry->is_sub_entry_valid(cur_sub_idx)) {
+                    continue; // Sub-entry not valid; fall through to service miss.
+                }
                 // TLB Hit! Mark dirty on write.
                 if (memref.data.type == TRACE_TYPE_WRITE) {
-                    ((tlb_entry_t *)tlb_entry)->dirty_ = true;
+                    typed_entry->set_sub_entry_dirty(cur_sub_idx, true);
                 }
                 // Record hit in base stats and TLB page-size stats.
                 record_access_stats(memref, true /*hit*/, tlb_entry);
                 if (stats_ != nullptr) {
                     ((tlb_stats_t *)stats_)
                         ->record_page_size_access(
-                            ((tlb_entry_t *)tlb_entry)->page_size_kind_, true /*hit*/);
+                            typed_entry->get_sub_entry_kind(cur_sub_idx), true /*hit*/);
                 }
                 break;
             }
@@ -168,8 +182,24 @@ tlb_t::request(const memref_t &memref_in)
 
         // If no way matched (`way == associativity_`), handle the TLB miss.
         if (way == associativity_) {
-            // Select the victim way in this set according to the replacement policy.
-            way = replace_which_way(block_idx);
+            // Check if there is an existing block with matching tag but missing sub-entry.
+            int existing_way = -1;
+            if (sector_size_ > 1) {
+                for (int w = 0; w < associativity_; ++w) {
+                    caching_device_block_t *b = &get_caching_device_block(block_idx, w);
+                    tlb_entry_t *tb = (tlb_entry_t *)b;
+                    if (b->tag_ == cur_tag && tb->pid_ == pid) {
+                        existing_way = w;
+                        break;
+                    }
+                }
+            }
+            if (existing_way >= 0) {
+                way = existing_way; // Reuse existing sector block slot.
+            } else {
+                // Select the victim way in this set according to the replacement policy.
+                way = replace_which_way(block_idx);
+            }
             caching_device_block_t *tlb_entry = &get_caching_device_block(block_idx, way);
             tlb_entry_t *typed_entry = (tlb_entry_t *)tlb_entry;
             // Track loaded_blocks_ when filling a previously invalid slot.
@@ -194,9 +224,24 @@ tlb_t::request(const memref_t &memref_in)
                 // This is a last-level (L2) TLB miss and a hardware page table walker is
                 // attached: execute the multi-level radix page table walk!
                 ptw_result_t ptw_res;
+                ptw_res.sector_size = sector_size_;
                 if (page_table_walker_->walk(memref, memref.data.addr, &ptw_res)) {
-                    resolved_ppn = ptw_res.page_base_paddr >> block_size_bits_;
+                    resolved_ppn = ptw_res.page_base_paddr >> 12;
                     resolved_kind = ptw_res.page_size_kind;
+                    // Install all sector entries brought in from the leaf PTE block!
+                    if (sector_size_ > 1) {
+                        typed_entry->sector_size_ = sector_size_;
+                        for (size_t s = 0; s < sector_size_; ++s) {
+                            if (s < ptw_res.sector_entries.size()) {
+                                typed_entry->set_sub_entry(
+                                    s, ptw_res.sector_entries[s].ppn,
+                                    ptw_res.sector_entries[s].page_size_kind,
+                                    ptw_res.sector_entries[s].dirty);
+                            } else {
+                                typed_entry->set_sub_entry(s, resolved_ppn + s, resolved_kind, false);
+                            }
+                        }
+                    }
                 }
             }
             // Install the translation into the selected way of this TLB.
@@ -204,7 +249,7 @@ tlb_t::request(const memref_t &memref_in)
             typed_entry->pid_ = pid;
             typed_entry->ppn_ = resolved_ppn;
             typed_entry->page_size_kind_ = resolved_kind;
-            typed_entry->dirty_ = (memref.data.type == TRACE_TYPE_WRITE);
+            typed_entry->set_sub_entry_dirty(cur_sub_idx, memref.data.type == TRACE_TYPE_WRITE);
         }
 
         // Update replacement policy state for the accessed way.
@@ -259,18 +304,34 @@ tlb_t::lookup_entry(memref_pid_t pid, addr_t vaddr, addr_t *ppn_out,
     // Compute the canonical tag for (pid, vaddr).
     addr_t tag = compute_canonical_tag(pid, vaddr, nullptr, nullptr);
     int block_idx = compute_block_idx(tag);
+    // Compute sub-entry index within sector for given vaddr.
+    size_t sub_idx = (sector_size_ > 1) ? ((vaddr >> 12) & (sector_size_ - 1)) : 0;
     // Search all ways in the set.
     for (int way = 0; way < associativity_; ++way) {
         const caching_device_block_t &block = get_caching_device_block(block_idx, way);
         const tlb_entry_t &tlb_entry = (const tlb_entry_t &)block;
         if (block.tag_ == tag && tlb_entry.pid_ == pid) {
-            if (ppn_out != nullptr) {
-                *ppn_out = tlb_entry.ppn_;
+            // In sector mode, verify that the requested sub-entry is valid.
+            if (sector_size_ > 1) {
+                if (!tlb_entry.is_sub_entry_valid(sub_idx)) {
+                    return false; // Sub-entry not present in sector block.
+                }
+                if (ppn_out != nullptr) {
+                    *ppn_out = tlb_entry.get_sub_entry_ppn(sub_idx); // Return sub-entry PPN.
+                }
+                if (kind_out != nullptr) {
+                    *kind_out = tlb_entry.get_sub_entry_kind(sub_idx); // Return sub-entry kind.
+                }
+                return true;
+            } else {
+                if (ppn_out != nullptr) {
+                    *ppn_out = tlb_entry.ppn_; // Return baseline PPN.
+                }
+                if (kind_out != nullptr) {
+                    *kind_out = tlb_entry.page_size_kind_; // Return baseline kind.
+                }
+                return true;
             }
-            if (kind_out != nullptr) {
-                *kind_out = tlb_entry.page_size_kind_;
-            }
-            return true;
         }
     }
     return false;
@@ -289,6 +350,10 @@ tlb_t::invalidate_tag_pid(addr_t tag, memref_pid_t pid,
         if (block.tag_ == tag && tlb_entry.pid_ == pid) {
             invalidate_caching_device_block(&block);
             loaded_blocks_--;
+            // Invalidate all sector sub-entries.
+            for (size_t s = 0; s < MAX_TLB_SECTOR_SIZE; ++s) {
+                tlb_entry.sub_entries_[s].valid = false;
+            }
             if (stats_ != nullptr) {
                 stats_->invalidate(invalidation_type);
             }

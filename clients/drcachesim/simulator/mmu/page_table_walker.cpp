@@ -84,17 +84,25 @@ page_table_walker_t::issue_pte_cache_read(const memref_t &origin_memref,
     if (c3 != nullptr && c3->get_stats() != nullptr) {
         c3_hits_before = c3->get_stats()->get_metric(metric_name_t::HITS); // Read L3 hits.
     }
-    // Construct a synthetic 8-byte physical TRACE_TYPE_READ for the hardware PTE.
+    // Construct a synthetic physical TRACE_TYPE_READ for the hardware PTE (or full sector of PTEs).
     memref_t pte_memref = {};                           // Zero-initialize memref struct.
     pte_memref.data.type = TRACE_TYPE_READ;             // Set read type for PTE lookup.
     pte_memref.data.pid = origin_memref.data.pid;       // Propagate process identifier.
     pte_memref.data.tid = origin_memref.data.tid;       // Propagate thread identifier.
-    pte_memref.data.addr = pte_phys_addr;               // Set target 8-byte physical address.
-    pte_memref.data.size = mmu_constants_t::PTE_SIZE_BYTES; // Size is 8 bytes (64 bits).
+
+    // If reading leaf PTE and sector mode is active, read the full sector block (e.g. 64B for 8 PTEs).
+    size_t access_size = mmu_constants_t::PTE_SIZE_BYTES;                                 // Default 8 bytes.
+    addr_t target_paddr = pte_phys_addr;                                                  // Target physical address.
+    if (ptw_level == ptw_level_t::PTW_LEVEL_1_PTE && sector_size_ > 1) {                  // Check sector mode.
+        access_size = sector_size_ * mmu_constants_t::PTE_SIZE_BYTES;                     // E.g., 8 * 8 = 64 bytes.
+        target_paddr = pte_phys_addr & ~static_cast<addr_t>(access_size - 1);             // Align to sector boundary.
+    }
+    pte_memref.data.addr = target_paddr;                                                  // Set physical address.
+    pte_memref.data.size = access_size;                                                   // Set physical access width.
     pte_memref.data.pc =
         type_is_instr(origin_memref.instr.type) ? origin_memref.instr.addr
                                                 : origin_memref.data.pc; // Source PC.
-    // Dispatch the 8-byte physical PTE read into the coupled data cache hierarchy.
+    // Dispatch the physical PTE read into the coupled data cache hierarchy.
     ptw_data_cache_->request(pte_memref);
     // Snapshot hit counters after issuing the PTE read.
     int64_t c1_hits_after = 0; // Post L1D hit count.
@@ -142,6 +150,8 @@ page_table_walker_t::walk(const memref_t &memref, addr_t vaddr, ptw_result_t *re
         address_space_mgr_->get_external_v2p_map(pid);
     // Walk and populate the architectural radix page table to get all steps [L4..leaf].
     ptw_result_t local_result;
+    // Propagate configured sector size into walk request.
+    local_result.sector_size = sector_size_;
     if (!pt->walk_and_populate(vaddr, is_write, ext_v2p,
                                &address_space_mgr_->get_huge_page_detector(),
                                &local_result)) {

@@ -94,6 +94,9 @@ struct cpu_simulator_knobs_t {
         , pwc_entries(32)                       // 32-entry Page Walk Cache per core.
         , pwc_assoc(4)                          // 4-way PWC.
         , page_size(4096)                       // 4 KB base page size.
+        , l2_tlb_entries(1536)                  // Default 1536 total PTE entries for L2 TLB.
+        , l2_tlb_assoc(6)                       // Default 6-way associativity (baseline: 256x6).
+        , l2_tlb_sector_size(1)                 // Default 1 (baseline mode; 2, 4, 8 for sector mode).
         , l1i_mshr_capacity(16)                 // 16 MSHRs for L1I.
         , l1i_rq_capacity(32)                   // 32 Read Queue entries for L1I.
         , l1i_pq_capacity(32)                   // 32 Prefetch Queue entries for L1I.
@@ -141,6 +144,9 @@ struct cpu_simulator_knobs_t {
     unsigned int pwc_entries;                   // PWC entries.
     unsigned int pwc_assoc;                     // PWC associativity.
     uint64_t page_size;                         // Base page size.
+    unsigned int l2_tlb_entries;                // Total L2 TLB PTE entries (baseline capacity).
+    unsigned int l2_tlb_assoc;                  // Associativity (ways) for L2 TLB.
+    unsigned int l2_tlb_sector_size;            // Sector size: 1 (baseline: 256x6), 2 (128x6), 4 (64x6), or 8 (32x6).
     size_t l1i_mshr_capacity;                   // L1I MSHR size.
     size_t l1i_rq_capacity;                     // L1I Read Queue size.
     size_t l1i_pq_capacity;                     // L1I Prefetch Queue size.

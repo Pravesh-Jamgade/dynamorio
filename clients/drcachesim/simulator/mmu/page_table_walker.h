@@ -166,8 +166,26 @@ public:
         return core_id_; // Return core index.
     }
 
+    /**
+     * @brief Sets the sector size for this hardware page table walker.
+     */
+    void
+    set_sector_size(size_t sector_size)
+    {
+        sector_size_ = (sector_size > 0) ? sector_size : 1; // Update configured sector size.
+    }
+
+    /**
+     * @brief Returns the configured sector size.
+     */
+    size_t
+    get_sector_size() const
+    {
+        return sector_size_; // Return sector size.
+    }
+
 private:
-    // Issues an 8-byte physical memory read for a PTE into `ptw_data_cache_` if attached
+    // Issues a physical memory read for a PTE (or full sector of PTEs) into `ptw_data_cache_` if attached
     // and returns the hierarchy level where the read was satisfied (L1D, L2, L3, DRAM).
     ptw_cache_hit_level_t
     issue_pte_cache_read(const memref_t &origin_memref, addr_t pte_phys_addr,
@@ -178,6 +196,7 @@ private:
     page_walk_cache_t pwc_;                         // Per-core Page Walk Cache.
     mmu_stats_t stats_;                             // Per-core MMU & PTW statistics.
     caching_device_t *ptw_data_cache_;              // Optional coupled data cache.
+    size_t sector_size_ = 1;                        // Configured sector size (1, 2, 4, or 8 PTEs).
 };
 
 } // namespace drmemtrace
