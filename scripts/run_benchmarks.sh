@@ -251,6 +251,10 @@ run_single_benchmark() {
     local start_time
     # Capture start epoch.
     start_time="$(date +%s)"
+    # Capture start date and time formatted string.
+    local start_time_str
+    # Format current date and time (YYYY-MM-DD HH:MM:SS).
+    start_time_str="$(date +"%Y-%m-%d %H:%M:%S")"
 
     # Execute simulator with process redirection to console log while displaying to terminal.
     "${DRRUN}" "${dr_args[@]}" -- "${app_cmd[@]}" 2>&1 | tee "$console_log"
@@ -259,13 +263,62 @@ run_single_benchmark() {
     local end_time
     # Capture end epoch.
     end_time="$(date +%s)"
+    # Capture completion date and time formatted string.
+    local completion_time_str
+    # Format completion timestamp (YYYY-MM-DD HH:MM:SS).
+    completion_time_str="$(date +"%Y-%m-%d %H:%M:%S")"
+
     # Compute wall-clock elapsed time in seconds.
     local elapsed=$(( end_time - start_time ))
 
-    # Print completion status.
+    # Format elapsed duration into human-friendly string.
+    local dur_str
+    # Check if duration spans an hour or more.
+    if (( elapsed >= 3600 )); then
+        # Format as Xh Ym Zs.
+        dur_str="$(( elapsed / 3600 ))h $(( (elapsed % 3600) / 60 ))m $(( elapsed % 60 ))s"
+    # Check if duration spans a minute or more.
+    elif (( elapsed >= 60 )); then
+        # Format as Xm Ys.
+        dur_str="$(( elapsed / 60 ))m $(( elapsed % 60 ))s"
+    # Otherwise format in seconds.
+    else
+        # Format as Xs.
+        dur_str="${elapsed}s"
+    fi
+
+    # Append completion metrics to the stats file if it exists.
+    if [[ -f "$stats_file" ]]; then
+        # Append completion timestamp.
+        echo "completion_time, ${completion_time_str}" >> "$stats_file"
+        # Append duration in seconds.
+        echo "duration_seconds, ${elapsed}" >> "$stats_file"
+        # Append formatted duration.
+        echo "duration_formatted, ${dur_str}" >> "$stats_file"
+    fi
+
+    # Append complete timing summary block to the console log.
+    {
+        # Write blank line.
+        echo ""
+        # Write separator.
+        echo "================================================================================"
+        # Write benchmark execution summary header.
+        echo " Execution Summary for ${name} (${MODE})"
+        # Write start timestamp.
+        echo " Started At:       ${start_time_str}"
+        # Write completion timestamp.
+        echo " Completed At:     ${completion_time_str}"
+        # Write total duration.
+        echo " Total Duration:   ${dur_str} (${elapsed} seconds)"
+        # Write separator.
+        echo "================================================================================"
+    } >> "$console_log"
+
+    # Print completion status with timestamp.
     echo "--------------------------------------------------------------------------------"
-    # Print elapsed duration.
-    echo " [DONE] Completed ${name} (${MODE}) in ${elapsed} seconds."
+    # Print completion timestamp and duration.
+    echo " [DONE] Completed ${name} (${MODE}) at ${completion_time_str} (Duration: ${dur_str} / ${elapsed}s)."
     # Print separator.
     echo "--------------------------------------------------------------------------------"
     # Print newline.

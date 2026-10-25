@@ -161,13 +161,13 @@ line_is_selected() {
 # Function to parse and display comparative simulation statistics.
 print_summary_table() {
     # Print table banner.
-    echo "=================================================================================================="
-    echo "                            SIMULATION EXPERIMENT RESULTS SUMMARY TABLE                           "
-    echo "=================================================================================================="
-    # Print column headers.
-    printf "%-30s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
-        "Experiment" "Retired" "Cycles" "IPC" "L1D Miss%" "L2 Miss%" "PTW Walks"
-    echo "-------------------------------+------------+------------+--------+------------+------------+----------"
+    echo "========================================================================================================================================"
+    echo "                                              SIMULATION EXPERIMENT RESULTS SUMMARY TABLE                                               "
+    echo "========================================================================================================================================"
+    # Print column headers including completion timestamp and duration.
+    printf "%-26s | %19s | %10s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
+        "Experiment" "Completed At" "Duration" "Retired" "Cycles" "IPC" "L1D Miss%" "L2 Miss%" "PTW Walks"
+    echo "---------------------------+---------------------+------------+------------+------------+--------+------------+------------+----------"
 
     # Search for all generated stats_*.log files in OUT_DIR.
     for sfile in "${OUT_DIR}"/stats_*.log; do
@@ -183,6 +183,15 @@ print_summary_table() {
         local exp_name
         # Clean experiment name string.
         exp_name="$(echo "$fname" | sed -E 's/^stats_//; s/\.log$//')"
+
+        # Extract completion timestamp from stats file if present.
+        local comp_time
+        # Read completion_time entry.
+        comp_time="$(awk -F', *' '$1=="completion_time" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
+        # Extract formatted duration from stats file if present.
+        local comp_dur
+        # Read duration_formatted entry.
+        comp_dur="$(awk -F', *' '$1=="duration_formatted" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
 
         # Extract scalar metrics using awk.
         local retired
@@ -204,12 +213,12 @@ print_summary_table() {
         # Read PTW walks.
         ptw="$(awk -F', *' '$1=="PTW walks" {print $2}' "$sfile" 2>/dev/null || echo "N/A")"
 
-        # Format and display row.
-        printf "%-30s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
-            "$exp_name" "${retired:-N/A}" "${cycles:-N/A}" "${ipc:-N/A}" \
+        # Format and display row including completion timestamp and duration.
+        printf "%-26s | %19s | %10s | %10s | %10s | %6s | %10s | %10s | %9s\n" \
+            "$exp_name" "${comp_time:-N/A}" "${comp_dur:-N/A}" "${retired:-N/A}" "${cycles:-N/A}" "${ipc:-N/A}" \
             "${l1d_miss:-N/A}" "${l2_miss:-N/A}" "${ptw:-N/A}"
     done
-    echo "=================================================================================================="
+    echo "========================================================================================================================================"
     echo "Detailed logs and CSV metrics located in: ${OUT_DIR}/"
 }
 
@@ -242,10 +251,15 @@ execute_job() {
     # Parse application binary name from after '--'.
     app_name="$(echo "$cmd" | sed -E 's/.*--[[:space:]]+(\.\/)?apps\///' | awk '{print $1}')"
 
-    # Print start notification.
-    echo "[START] Job #${line_num} (${app_name}) running concurrently..."
+    # Capture start date and time formatted string.
+    local start_time_str
+    # Format current date and time (YYYY-MM-DD HH:MM:SS).
+    start_time_str="$(date +"%Y-%m-%d %H:%M:%S")"
 
-    # Record start time.
+    # Print start notification with timestamp.
+    echo "[START] [${start_time_str}] Job #${line_num} (${app_name}) running concurrently..."
+
+    # Record start time in epoch seconds.
     local t_start
     # Capture start epoch.
     t_start="$(date +%s)"
@@ -255,20 +269,75 @@ execute_job() {
     # Capture exit code.
     local ret=$?
 
-    # Record end time.
+    # Record end time in epoch seconds.
     local t_end
     # Capture end epoch.
     t_end="$(date +%s)"
+    # Capture completion date and time formatted string.
+    local completion_time_str
+    # Format completion timestamp (YYYY-MM-DD HH:MM:SS).
+    completion_time_str="$(date +"%Y-%m-%d %H:%M:%S")"
+
     # Compute elapsed seconds.
     local dur=$(( t_end - t_start ))
 
+    # Format elapsed duration into human-friendly string (hours, minutes, seconds).
+    local dur_str
+    # Check if duration spans an hour or more.
+    if (( dur >= 3600 )); then
+        # Format as Xh Ym Zs.
+        dur_str="$(( dur / 3600 ))h $(( (dur % 3600) / 60 ))m $(( dur % 60 ))s"
+    # Check if duration spans a minute or more.
+    elif (( dur >= 60 )); then
+        # Format as Xm Ys.
+        dur_str="$(( dur / 60 ))m $(( dur % 60 ))s"
+    # Otherwise format in seconds only.
+    else
+        # Format as Xs.
+        dur_str="${dur}s"
+    fi
+
+    # Append complete timing summary block to the job's console log.
+    {
+        # Write blank line.
+        echo ""
+        # Write header line.
+        echo "================================================================================"
+        # Write job line number and application.
+        echo " Execution Status Summary for Job #${line_num} (${app_name})"
+        # Write start timestamp.
+        echo " Started At:        ${start_time_str}"
+        # Write completion timestamp.
+        echo " Completed At:      ${completion_time_str}"
+        # Write formatted elapsed duration.
+        echo " Elapsed Duration:  ${dur_str} (${dur} seconds)"
+        # Write process exit code.
+        echo " Exit Code:         ${ret}"
+        # Write footer line.
+        echo "================================================================================"
+    } >> "$console_log"
+
+    # Extract target stats_file from the executed command line if specified.
+    local sfile_match
+    # Search for -stats_file argument value.
+    sfile_match="$(echo "$cmd" | grep -oE -- '-stats_file[[:space:]]+[^[:space:]]+' | awk '{print $2}')"
+    # Check if stats file exists on disk.
+    if [[ -n "$sfile_match" && -f "$sfile_match" ]]; then
+        # Append completion timestamp to the CSV statistics file.
+        echo "completion_time, ${completion_time_str}" >> "$sfile_match"
+        # Append elapsed seconds to the CSV statistics file.
+        echo "duration_seconds, ${dur}" >> "$sfile_match"
+        # Append formatted human-readable duration to the CSV statistics file.
+        echo "duration_formatted, ${dur_str}" >> "$sfile_match"
+    fi
+
     # Check return code.
     if [[ $ret -eq 0 ]]; then
-        # Print completion message.
-        echo "[DONE]  Job #${line_num} (${app_name}) completed successfully in ${dur}s. (Log: ${console_log})"
+        # Print completion message with completion timestamp and duration.
+        echo "[DONE]  [${completion_time_str}] Job #${line_num} (${app_name}) completed successfully in ${dur_str} (${dur}s). (Log: ${console_log})"
     else
-        # Print failure warning.
-        echo "[FAIL]  Job #${line_num} (${app_name}) failed with exit code ${ret} after ${dur}s. (Log: ${console_log})" >&2
+        # Print failure warning with completion timestamp and duration.
+        echo "[FAIL]  [${completion_time_str}] Job #${line_num} (${app_name}) failed with exit code ${ret} at ${completion_time_str} after ${dur_str} (${dur}s). (Log: ${console_log})" >&2
     fi
 }
 
