@@ -113,14 +113,6 @@ done
 # Ensure results directory exists.
 mkdir -p "$OUT_DIR"
 
-# Ensure dataset for HashJoin exists if HashJoin jobs are run.
-if [[ -d "${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master" && ! -f "${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master/customer.tbl" ]]; then
-    # Inform user.
-    echo "Generating missing TPC-H tables in apps/hashjoin/tpch-dbgen-master..."
-    # Build tables.
-    (cd "${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master" && make && ./dbgen -s 0.01)
-fi
-
 # Function to test whether a given line number is in the requested range.
 line_is_selected() {
     # Extract candidate line index.
@@ -156,6 +148,106 @@ line_is_selected() {
     done
     # Line not selected.
     return 1
+}
+
+# Function to inspect selected jobs in the jobfile and ensure matching TPC-H datasets exist.
+ensure_hashjoin_datasets() {
+    # Initialize maximum requested orders count.
+    local max_orders=0
+    # Initialize line counter.
+    local cur_line=0
+
+    # Scan the jobfile line by line.
+    while IFS= read -r jline || [[ -n "$jline" ]]; do
+        # Trim whitespace from candidate command.
+        local tline
+        # Remove leading and trailing spaces.
+        tline="$(echo "$jline" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+        # Skip comment lines or empty lines.
+        if [[ "$tline" =~ ^#.*$ || -z "$tline" ]]; then
+            # Move to next line.
+            continue
+        fi
+
+        # Increment line index counter.
+        cur_line=$(( cur_line + 1 ))
+
+        # Check if this line is in the selected execution set.
+        if ! line_is_selected "$cur_line"; then
+            # Skip unselected line.
+            continue
+        fi
+
+        # Check if command line executes query10 HashJoin.
+        if [[ "$tline" =~ query10[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+([0-9]+)[[:space:]]+[^[:space:]]+[[:space:]]+([0-9]+) ]]; then
+            # Extract requested orders count from regex capture group 2.
+            local req_orders="${BASH_REMATCH[2]}"
+            # Update max_orders if this job requests a larger count.
+            if (( req_orders > max_orders )); then
+                # Set new max_orders.
+                max_orders="$req_orders"
+            fi
+        fi
+    done < "$JOBFILE"
+
+    # If no selected jobs invoke HashJoin, no dataset generation is required.
+    if (( max_orders == 0 )); then
+        # Return success immediately.
+        return 0
+    fi
+
+    # Determine required scale factor based on requested orders count.
+    local req_scale="50"
+    # Small smoke tests (<= 15,000 orders).
+    if (( max_orders <= 15000 )); then
+        # Set scale factor 0.01.
+        req_scale="0.01"
+    # Standard scale tests (<= 1,500,000 orders).
+    elif (( max_orders <= 1500000 )); then
+        # Set scale factor 1.
+        req_scale="1"
+    # Large server scale tests (> 1,500,000 orders, e.g. 75,000,000).
+    else
+        # Set scale factor 50.
+        req_scale="50"
+    fi
+
+    # Define customer table file path.
+    local cust_tbl="${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master/customer.tbl"
+    # Define orders table file path.
+    local orders_tbl="${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master/orders.tbl"
+
+    # Flag indicating whether dataset generation is required.
+    local need_generation=0
+
+    # Check if either table file is missing.
+    if [[ ! -f "$cust_tbl" || ! -f "$orders_tbl" ]]; then
+        # Require generation.
+        need_generation=1
+    else
+        # Count existing lines in orders table.
+        local existing_rows
+        # Get line count.
+        existing_rows=$(wc -l < "$orders_tbl")
+        # Check if existing row count is less than requested orders count.
+        if (( existing_rows < max_orders )); then
+            # Require regeneration.
+            need_generation=1
+        fi
+    fi
+
+    # Execute dataset generation if missing or undersized.
+    if (( need_generation == 1 )); then
+        # Print informational banner.
+        echo "================================================================================"
+        # Print status message.
+        echo " [TPC-H] Generating required dataset for HashJoin (SF=${req_scale}, orders >= ${max_orders})..."
+        # Print banner footer.
+        echo "================================================================================"
+        # Call generate_tpch_data.sh with computed scale factor.
+        "${REPO_ROOT}/scripts/generate_tpch_data.sh" "${req_scale}"
+    fi
 }
 
 # Function to parse and display comparative simulation statistics.
@@ -236,6 +328,12 @@ if [[ ! -f "$JOBFILE" ]]; then
     echo "Error: Jobfile not found at: $JOBFILE" >&2
     # Exit with code 1.
     exit 1
+fi
+
+# Ensure required TPC-H datasets are present before launching jobs (skipped in dry-run).
+if [[ $DRY_RUN -ne 1 ]]; then
+    # Validate and generate matching dataset scale if any HashJoin job is selected.
+    ensure_hashjoin_datasets
 fi
 
 # Function to execute a single job in the background and log its timing and output.
