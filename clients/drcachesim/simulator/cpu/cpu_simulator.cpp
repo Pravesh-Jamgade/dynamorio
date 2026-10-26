@@ -173,6 +173,12 @@ cpu_simulator_t::~cpu_simulator_t()
 bool
 cpu_simulator_t::process_memref(const memref_t &memref)
 {
+    // Check if user specified a maximum reference limit and threshold reached.
+    if (knobs_.sim_refs > 0 && total_simulated_refs_ >= knobs_.sim_refs) {
+        return true; // Ignore subsequent references once reference limit reached.
+    }
+    ++total_simulated_refs_; // Increment total memory reference count.
+
     // Check if this memory reference represents an instruction fetch.
     if (type_is_instr(memref.instr.type)) {
         ++total_simulated_instrs_; // Increment total simulated instruction count.

@@ -291,6 +291,9 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         if (op_stats_file.specified()) {
             knobs.stats_file = op_stats_file.get_value(); // Override stats log filename.
         }
+        if (op_sim_refs.specified()) {
+            knobs.sim_refs = op_sim_refs.get_value(); // Override max simulated references limit.
+        }
         // Create and return the OoO CPU, MMU, and 3-level cache simulator tool instance.
         return cpu_simulator_create(knobs);
     } else if (tool == HISTOGRAM) {

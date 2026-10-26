@@ -12,7 +12,8 @@
 
 int main(int argc, char *argv[]){								// receives arguments via terminal
 	long int l_tab1, l_tab2, tuples_counter = 0;
-	uint32_t i = 0, j = 0, l = 0, size;
+	size_t i = 0, l = 0;										// use size_t to prevent 32-bit overflow on large datasets (>4GB)
+	uint32_t j = 0, size;										// column token index and hash table size
 	int hits_counter[66], k = 0;
 	FILE *input_tab, *output_file;								// declare pointer to the files
 	char line[1000], *token = NULL, *result = NULL, *p, buffer[25], file_name[12] = "tempos"; 
@@ -480,7 +481,12 @@ int main(int argc, char *argv[]){								// receives arguments via terminal
 	printf("Tempo decorrido para realizar a fase de análise: %g ms\n\n", elapsedtime);
 
 	ticks[0] = clock();
-	print_query10(out_custkey, out_name, l_tab2);				// prints query 10 output
+	// Suppress verbose stdout output for large runs (>100k tuples) to prevent filling disk with gigabytes of logs.
+	if (l_tab2 <= 100000) {										// only print all tuples for small test runs
+		print_query10(out_custkey, out_name, l_tab2);			// prints query 10 output
+	} else {													// large dataset execution
+		printf("Output tuple printing suppressed for large run (>100k tuples)...\n"); // info log
+	}															// end output check
 
 	printf("\nA saída da 'Query 10' tem %li tuplas.\n", tuples_counter);
 	ticks[1] = clock();

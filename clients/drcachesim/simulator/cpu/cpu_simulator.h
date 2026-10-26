@@ -113,6 +113,7 @@ struct cpu_simulator_knobs_t {
         , l3_wq_capacity(64)                    // 64 Write Queue entries for L3.
         , l3_pq_capacity(64)                    // 64 Prefetch Queue entries for L3.
         , dram_latency(150)                     // 150-cycle main memory DRAM latency.
+        , sim_refs(0)                           // Default 0: unlimited references simulated.
         , heartbeat_interval(10000000)          // Default 10M simulated instructions heartbeat.
         , stats_file("stats.log")               // Default output file for CSV simulation stats.
     {
@@ -163,6 +164,7 @@ struct cpu_simulator_knobs_t {
     size_t l3_wq_capacity;                      // L3 Write Queue size.
     size_t l3_pq_capacity;                      // L3 Prefetch Queue size.
     uint64_t dram_latency;                      // DRAM access latency in cycles.
+    uint64_t sim_refs;                          // Max references to simulate (0 = unlimited).
     uint64_t heartbeat_interval;                // Instruction interval between progress heartbeats (0 disables).
     std::string stats_file;                     // Output file path to write CSV statistics (default stats.log).
 };
@@ -303,6 +305,7 @@ private:
     std::vector<std::unique_ptr<tlb_t>> dtlbs_;               // Per-core L1 DTLBs.
     std::vector<std::unique_ptr<tlb_t>> l2_tlbs_;             // Per-core unified L2 TLBs.
     std::vector<std::unique_ptr<cpu_core_t>> cores_;          // Per-core OoO CPU pipelines.
+    uint64_t total_simulated_refs_ = 0;                       // Counter of total simulated memory references.
     uint64_t total_simulated_instrs_ = 0;                     // Counter of total simulated instructions.
     uint64_t last_heartbeat_instrs_ = 0;                      // Instruction count when last heartbeat printed.
 };
