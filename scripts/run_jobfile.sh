@@ -153,11 +153,11 @@ line_is_selected() {
     return 1
 }
 
-# Function to inspect selected jobs in the jobfile and ensure matching TPC-H datasets exist.
+# Function to ensure the large TPC-H dataset exists once, skipping if already present.
 ensure_hashjoin_datasets() {
-    # Initialize maximum requested orders count.
-    local max_orders=0
-    # Initialize line counter.
+    # Flag to track whether any selected job executes HashJoin.
+    local need_hashjoin=0
+    # Line counter for jobfile traversal.
     local cur_line=0
 
     # Scan the jobfile line by line.
@@ -183,37 +183,18 @@ ensure_hashjoin_datasets() {
         fi
 
         # Check if command line executes query10 HashJoin.
-        if [[ "$tline" =~ query10[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+([0-9]+)[[:space:]]+[^[:space:]]+[[:space:]]+([0-9]+) ]]; then
-            # Extract requested orders count from regex capture group 2.
-            local req_orders="${BASH_REMATCH[2]}"
-            # Update max_orders if this job requests a larger count.
-            if (( req_orders > max_orders )); then
-                # Set new max_orders.
-                max_orders="$req_orders"
-            fi
+        if [[ "$tline" =~ query10 ]]; then
+            # Flag that HashJoin is required.
+            need_hashjoin=1
+            # Break early once requirement confirmed.
+            break
         fi
     done < "$JOBFILE"
 
     # If no selected jobs invoke HashJoin, no dataset generation is required.
-    if (( max_orders == 0 )); then
+    if (( need_hashjoin == 0 )); then
         # Return success immediately.
         return 0
-    fi
-
-    # Determine required scale factor based on requested orders count.
-    local req_scale="50"
-    # Small smoke tests (<= 15,000 orders).
-    if (( max_orders <= 15000 )); then
-        # Set scale factor 0.01.
-        req_scale="0.01"
-    # Standard scale tests (<= 1,500,000 orders).
-    elif (( max_orders <= 1500000 )); then
-        # Set scale factor 1.
-        req_scale="1"
-    # Large server scale tests (> 1,500,000 orders, e.g. 75,000,000).
-    else
-        # Set scale factor 50.
-        req_scale="50"
     fi
 
     # Define customer table file path.
@@ -221,36 +202,27 @@ ensure_hashjoin_datasets() {
     # Define orders table file path.
     local orders_tbl="${REPO_ROOT}/apps/hashjoin/tpch-dbgen-master/orders.tbl"
 
-    # Flag indicating whether dataset generation is required.
-    local need_generation=0
-
-    # Check if either table file is missing.
-    if [[ ! -f "$cust_tbl" || ! -f "$orders_tbl" ]]; then
-        # Require generation.
-        need_generation=1
-    else
-        # Count existing lines in orders table.
-        local existing_rows
-        # Get line count.
-        existing_rows=$(wc -l < "$orders_tbl")
-        # Check if existing row count is less than requested orders count.
-        if (( existing_rows < max_orders )); then
-            # Require regeneration.
-            need_generation=1
+    # Check if the large dataset already exists on disk.
+    if [[ -f "$cust_tbl" && -f "$orders_tbl" ]]; then
+        # Query file size in bytes using stat without reading file contents.
+        local orders_size
+        # Get size using Linux stat or BSD stat fallback.
+        orders_size=$(stat -c%s "$orders_tbl" 2>/dev/null || stat -f%z "$orders_tbl" 2>/dev/null || echo 0)
+        # SF=50 orders.tbl is ~8.3 GB (8.85B bytes); check for at least 1 GB threshold (1,073,741,824 bytes).
+        if (( orders_size >= 1073741824 )); then
+            # Large dataset already exists; do not create a new one.
+            return 0
         fi
     fi
 
-    # Execute dataset generation if missing or undersized.
-    if (( need_generation == 1 )); then
-        # Print informational banner.
-        echo "================================================================================"
-        # Print status message.
-        echo " [TPC-H] Generating required dataset for HashJoin (SF=${req_scale}, orders >= ${max_orders})..."
-        # Print banner footer.
-        echo "================================================================================"
-        # Call generate_tpch_data.sh with computed scale factor.
-        "${REPO_ROOT}/scripts/generate_tpch_data.sh" "${req_scale}"
-    fi
+    # Large dataset missing or incomplete: generate large dataset (SF=50, ~10 GB) once.
+    echo "================================================================================"
+    # Print status notification banner.
+    echo " [TPC-H] HashJoin large dataset not found. Generating SF=50 (~10 GB) once..."
+    # Print banner footer.
+    echo "================================================================================"
+    # Execute generation script once at Scale Factor 50.
+    "${REPO_ROOT}/scripts/generate_tpch_data.sh" 50
 }
 
 # Function to parse and display comparative simulation statistics.
