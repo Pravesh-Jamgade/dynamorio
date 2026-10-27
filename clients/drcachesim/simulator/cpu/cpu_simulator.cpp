@@ -398,6 +398,8 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "page_fault_penalty, " << knobs_.page_fault_penalty << "\n";
     os << "sim_refs, " << knobs_.sim_refs << "\n";
     os << "heartbeat_interval, " << knobs_.heartbeat_interval << "\n";
+    // Separate configuration metadata block from runtime performance statistics.
+    os << "-------------------------------------------------------------------\n";
 
     // Output scalar metrics in CSV format.
     os << std::fixed << std::setprecision(4);                                       // Set precision.
@@ -750,6 +752,14 @@ cpu_simulator_t::print_results()
     std::cerr << "===================================================================\n";
     std::cerr << "       OUT-OF-ORDER CPU, MMU & 3-LEVEL CACHE SIMULATION RESULTS     \n";
     std::cerr << "===================================================================\n";
+    std::cerr << "  Configuration & Simulation Metadata:\n";
+    std::cerr << "    Config file:               " << (knobs_.config_file.empty() ? "default" : knobs_.config_file) << "\n";
+    std::cerr << "    Num cores:                 " << knobs_.num_cores << "\n";
+    std::cerr << "    ROB capacity:              " << knobs_.rob_capacity << " entries\n";
+    std::cerr << "    L2 TLB sector size:        " << knobs_.l2_tlb_sector_size << "\n";
+    std::cerr << "    DRAM latency:              " << knobs_.dram_latency << " cycles\n";
+    std::cerr << "    Page fault penalty:        " << knobs_.page_fault_penalty << " cycles\n";
+    std::cerr << "-------------------------------------------------------------------\n";
 
     // 1. Print per-core CPU pipeline statistics (Fetch, BTB, ROB, LSQ, Cycles, IPC).
     for (unsigned int i = 0; i < knobs_.num_cores; ++i) {
