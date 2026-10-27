@@ -208,10 +208,17 @@ run_single_benchmark() {
     # Set console log path.
     local console_log="${OUT_DIR}/console_${name}_${MODE}.log"
 
+    # Generate unique IPC pipe name for this benchmark run to prevent collision with other runs.
+    local unique_ipc="drcachesimpipe_bench_${name}_pid${$}_rnd${RANDOM}"
+    # Remove any stale pipe for this unique name.
+    rm -f "/tmp/${unique_ipc}"*
+
     # Assemble drrun simulator options.
     local dr_args=(
         # Use DynamoRIO memory trace tool.
         -t drmemtrace
+        # Isolate IPC pipe across concurrent benchmark and job runs.
+        -ipc_name "$unique_ipc"
         # Activate Out-of-Order CPU simulator.
         -simulator_type cpu
         # Pass microarchitecture INI configuration.
@@ -258,6 +265,9 @@ run_single_benchmark() {
 
     # Execute simulator with process redirection to console log while displaying to terminal.
     "${DRRUN}" "${dr_args[@]}" -- "${app_cmd[@]}" 2>&1 | tee "$console_log"
+
+    # Clean up unique IPC pipe after process finishes.
+    rm -f "/tmp/${unique_ipc}"*
 
     # Record end timestamp.
     local end_time

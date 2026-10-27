@@ -32,6 +32,11 @@ GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")"
 # Export GIT_COMMIT_ID to environment for simulator process detection.
 export GIT_COMMIT_ID="$GIT_COMMIT"
 
+# Generate a globally unique execution identifier combining high-resolution epoch, PID, and randomness.
+RUN_ID="$(date +%s%N 2>/dev/null || date +%s)_pid${$}_rnd${RANDOM}"
+# Register cleanup trap to remove named pipes created by this specific run upon exit.
+trap 'rm -f /tmp/drcachesimpipe_run'"${RUN_ID}"'_* 2>/dev/null || true' EXIT INT TERM
+
 # Define usage information function.
 usage() {
     # Print usage header.
@@ -118,8 +123,26 @@ done
 # Ensure results directory exists.
 mkdir -p "$OUT_DIR"
 
-# Clean up any stale named pipes in /tmp from prior runs.
-rm -f /tmp/drcachesimpipe*
+# Safely clean up orphaned pipes from terminated runs without affecting concurrently active runs.
+clean_stale_pipes() {
+    # Scan existing named pipes in /tmp matching our naming convention.
+    for ppath in /tmp/drcachesimpipe_*; do
+        # Guard if glob did not match any file.
+        [[ -e "$ppath" ]] || continue
+        # If the pipe contains a PID tag, check if the owning process is still alive.
+        if [[ "$ppath" =~ _pid([0-9]+)_ ]]; then
+            local owner_pid="${BASH_REMATCH[1]}"
+            # If the process is still running, leave its pipe intact!
+            if kill -0 "$owner_pid" 2>/dev/null; then
+                continue
+            fi
+        fi
+        # Remove orphaned pipe from terminated process.
+        rm -f "$ppath" 2>/dev/null || true
+    done
+}
+# Clean orphaned pipes.
+clean_stale_pipes
 
 # Function to test whether a given line number is in the requested range.
 line_is_selected() {
@@ -353,13 +376,13 @@ execute_job() {
         cmd="$(echo "$cmd" | sed -E "s|-stats_file[[:space:]]+[^[:space:]]+|-stats_file ${target_stats_file}|")"
     fi
 
-    # Assign a unique IPC pipe name for this job to prevent parallel jobs from colliding on /tmp/drcachesimpipe.
-    local unique_ipc="drcachesimpipe_${$}_${line_num}"
+    # Assign a globally unique IPC pipe name for this job across different script runs and concurrent jobs.
+    local unique_ipc="drcachesimpipe_run${RUN_ID}_job$(printf "%02d" "${line_num}")_sub${BASHPID:-$$}_${RANDOM}"
     # Remove any stale pipe for this job.
     rm -f "/tmp/${unique_ipc}"*
-    # Inject or update -ipc_name in command to isolate named pipes between concurrent jobs.
+    # Inject or update -ipc_name in command to isolate named pipes across runs.
     if [[ "$cmd" =~ -ipc_name[[:space:]]+[^[:space:]]+ ]]; then
-        # Replace existing ipc_name.
+        # Replace existing ipc_name with unique pipe name.
         cmd="$(echo "$cmd" | sed -E "s|-ipc_name[[:space:]]+[^[:space:]]+|-ipc_name ${unique_ipc}|")"
     else
         # Inject -ipc_name right after 'drmemtrace '.
