@@ -221,8 +221,8 @@ ensure_hashjoin_datasets() {
     echo " [TPC-H] HashJoin large dataset not found. Generating SF=50 (~10 GB) once..."
     # Print banner footer.
     echo "================================================================================"
-    # Execute generation script once at Scale Factor 50.
-    "${REPO_ROOT}/scripts/generate_tpch_data.sh" 50
+    # Execute standalone dataset creation script to generate SF=50 tables.
+    "${REPO_ROOT}/scripts/create_hashjoin_dataset.sh"
 }
 
 # Function to parse and display comparative simulation statistics.
