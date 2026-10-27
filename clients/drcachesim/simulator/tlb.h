@@ -59,6 +59,7 @@ struct tlb_access_result_t {
     bool hit_l1 = false;         // True if satisfied by L1 TLB hit.
     bool hit_l2 = false;         // True if satisfied by unified L2 TLB hit.
     bool ptw_walk = false;       // True if required hardware Page Table Walk to memory.
+    bool is_page_fault = false;  // True if translation triggered a first-touch demand page fault.
     uint64_t latency_cycles = 1; // Total translation latency in processor cycles.
 };
 

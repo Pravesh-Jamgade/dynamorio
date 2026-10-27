@@ -414,6 +414,8 @@ ini_config_t::apply_to_knobs(cpu_simulator_knobs_t &knobs) const
     knobs.pwc_entries = get_uint64(mmu_sec, "pwc_entries", knobs.pwc_entries);
     knobs.pwc_assoc = get_uint64(mmu_sec, "pwc_assoc", knobs.pwc_assoc);
     knobs.page_size = get_bytesize(mmu_sec, "page_size", knobs.page_size);
+    knobs.page_fault_penalty = get_uint64(mmu_sec, "page_fault_penalty",
+                               get_uint64(cpu_sec, "page_fault_penalty", knobs.page_fault_penalty)); // Page fault penalty.
 
     // [l2_tlb] or [mmu] L2 TLB sector parameters.
     std::string l2_tlb_sec = has_section("l2_tlb") ? "l2_tlb" : (has_section("l2tlb") ? "l2tlb" : mmu_sec); // Section.

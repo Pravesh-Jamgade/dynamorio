@@ -199,6 +199,24 @@ public:
     }
 
     /**
+     * @brief Configures additional latency penalty (e.g., 2000-5000 cycles) charged on first-touch OS demand page faults.
+     */
+    void
+    set_page_fault_penalty(uint64_t penalty)
+    {
+        page_fault_penalty_ = penalty; // Set OS page fault servicing penalty in cycles.
+    }
+
+    /**
+     * @brief Returns the configured OS page fault penalty in cycles.
+     */
+    uint64_t
+    get_page_fault_penalty() const
+    {
+        return page_fault_penalty_; // Return page fault penalty in cycles.
+    }
+
+    /**
      * @brief Returns the total latency in cycles incurred by the most recent page table walk.
      */
     uint64_t
@@ -225,6 +243,7 @@ private:
     uint64_t l2_hit_latency_ = 14;                  // Latency for PTE read hitting in L2 (L1D + L2).
     uint64_t l3_hit_latency_ = 34;                  // Latency for PTE read hitting in L3 (L1D + L2 + L3).
     uint64_t dram_latency_ = 184;                   // Latency for PTE read hitting in DRAM (caches + DRAM).
+    uint64_t page_fault_penalty_ = 2000;            // Latency penalty in cycles for OS demand page fault.
     uint64_t last_walk_latency_ = 0;                // Latency in cycles of the last executed walk.
 };
 

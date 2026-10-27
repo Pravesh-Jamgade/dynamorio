@@ -566,6 +566,13 @@ droption_t<unsigned int> op_TLB_dram_latency(
     "Latency in cycles for main memory DRAM access",
     "Specifies the latency in processor clock cycles for an uncached memory or PTE read.");
 
+// Option specifying OS demand page fault servicing penalty in cycles.
+droption_t<uint64_t> op_page_fault_penalty(
+    DROPTION_SCOPE_FRONTEND, "page_fault_penalty", 2000ULL,
+    "Operating system demand page fault penalty in processor cycles",
+    "Specifies the software OS kernel servicing penalty in processor clock cycles (e.g., 2000-5000 cycles) "
+    "incurred on a first-touch demand page fault (frame allocation, zeroing, and kernel exception return).");
+
 droption_t<std::string> op_cpu_config(
     DROPTION_SCOPE_FRONTEND, "cpu_config", "",
     "Path to INI configuration file for O3 CPU simulator",

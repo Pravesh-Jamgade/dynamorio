@@ -253,6 +253,7 @@ tlb_t::request(const memref_t &memref_in)
                 last_access_result_.hit_l1 = false;
                 last_access_result_.hit_l2 = p_res.hit_l2;
                 last_access_result_.ptw_walk = p_res.ptw_walk;
+                last_access_result_.is_page_fault = p_res.is_page_fault;
                 last_access_result_.latency_cycles = hit_latency_ + p_res.latency_cycles;
             } else if (page_table_walker_ != nullptr) {
                 // This is a last-level (L2) TLB miss and a hardware page table walker is
@@ -265,6 +266,7 @@ tlb_t::request(const memref_t &memref_in)
                     last_access_result_.hit_l1 = false;
                     last_access_result_.hit_l2 = false;
                     last_access_result_.ptw_walk = true;
+                    last_access_result_.is_page_fault = ptw_res.is_page_fault;
                     last_access_result_.latency_cycles = hit_latency_ + ptw_res.total_latency_cycles;
                     // Install all sector entries brought in from the leaf PTE block!
                     if (sector_size_ > 1) {

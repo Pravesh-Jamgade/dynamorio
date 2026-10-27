@@ -299,6 +299,9 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         if (op_page_size.specified()) {
             knobs.page_size = op_page_size.get_value();
         }
+        if (op_page_fault_penalty.specified()) {
+            knobs.page_fault_penalty = op_page_fault_penalty.get_value(); // Override page fault penalty.
+        }
         if (op_heartbeat_interval.specified()) {
             knobs.heartbeat_interval = op_heartbeat_interval.get_value(); // Override heartbeat interval.
         }

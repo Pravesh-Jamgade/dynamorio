@@ -1844,6 +1844,67 @@ unit_test_realistic_tlb_and_cache_miss_latencies()
     assert(res3.latency_cycles == 1);                                               // Exact 1-cycle L1 DTLB hit latency!
 }
 
+// Test 20: Operating System Demand Page Fault Penalty and Core Stall Modeling.
+static void
+unit_test_page_fault_penalty()
+{
+    // 1. Configure CPU simulator with 3000-cycle OS demand page fault penalty.
+    cpu_simulator_knobs_t knobs;                                                    // Instantiate knobs.
+    knobs.num_cores = 1;                                                            // 1 simulated CPU core.
+    knobs.page_fault_penalty = 3000;                                                // Set 3000-cycle OS page fault penalty.
+    cpu_simulator_t sim(knobs);                                                     // Construct CPU simulator.
+
+    tlb_t *dtlb = sim.get_dtlb(0);                                                  // Retrieve core 0 DTLB.
+    assert(dtlb != nullptr);                                                         // Verify non-null DTLB.
+
+    // 2. Perform first access to an unmapped page 0x500000 (triggers demand page fault).
+    memref_t ref1 = {};                                                             // Initialize memref.
+    ref1.data.type = TRACE_TYPE_WRITE;                                              // Store type.
+    ref1.data.pid = 8888;                                                           // Process ID.
+    ref1.data.tid = 1;                                                              // Thread ID.
+    ref1.data.addr = 0x500000ULL;                                                   // Faulting page address.
+    ref1.data.size = 8;                                                             // Access size.
+    ref1.data.pc = 0x400010ULL;                                                     // PC.
+
+    tlb_access_result_t res1 = dtlb->request_with_latency(ref1);                    // Request translation with latency.
+    assert(!res1.hit_l1);                                                           // Miss in L1 DTLB.
+    assert(!res1.hit_l2);                                                           // Miss in L2 TLB.
+    assert(res1.ptw_walk);                                                          // Required PTW walk.
+    assert(res1.is_page_fault);                                                     // Flagged as first-touch demand page fault!
+    // Total latency must include L1 hit (1) + L2 probe (9) + PTW DRAM (184) + page_fault_penalty (3000) >= 3194 cycles!
+    assert(res1.latency_cycles >= 3194);                                            // Latency reflects full OS fault penalty!
+
+    // 3. Perform second access to the now-mapped page: must hit without page fault.
+    tlb_access_result_t res2 = dtlb->request_with_latency(ref1);                    // Repeat translation request.
+    assert(res2.hit_l1);                                                            // Hit in L1 DTLB!
+    assert(!res2.is_page_fault);                                                    // Not a page fault.
+    assert(res2.latency_cycles == 1);                                               // Fast 1-cycle hit latency.
+
+    // 4. Test pipeline integration: feed a demand store through process_memref.
+    cpu_simulator_knobs_t pipe_knobs;                                               // Instantiate pipeline knobs.
+    pipe_knobs.num_cores = 1;                                                       // 1 CPU core.
+    pipe_knobs.page_fault_penalty = 2500;                                           // 2500-cycle OS page fault penalty.
+    cpu_simulator_t pipe_sim(pipe_knobs);                                           // Construct pipeline simulator.
+
+    // Process a store that triggers a demand page fault.
+    memref_t store_ref = {};                                                        // Initialize store memref.
+    store_ref.data.type = TRACE_TYPE_WRITE;                                         // Store type.
+    store_ref.data.pid = 7777;                                                      // Process ID.
+    store_ref.data.tid = 1;                                                         // Thread ID.
+    store_ref.data.addr = 0x600000ULL;                                              // Faulting target address.
+    store_ref.data.size = 8;                                                        // Size in bytes.
+    store_ref.data.pc = 0x400020ULL;                                                // PC.
+    assert(pipe_sim.process_memref(store_ref));                                     // Ingest store reference into CPU pipeline.
+
+    cpu_core_t *core = pipe_sim.get_core(0);                                        // Retrieve core 0.
+    assert(core != nullptr);                                                        // Verify non-null core.
+    core->flush_and_drain_pipeline();                                               // Drain pipeline.
+
+    // Core cycles must reflect the page fault stall penalty!
+    assert(core->get_current_cycle() >= 2500);                                      // Verified pipeline stalled for fault!
+    assert(core->page_fault_stall_cycles() >= 2500);                                 // Verified page fault stall counter!
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1884,6 +1945,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_cold_capacity_compulsory_and_reuse_histogram();
     // Run Realistic Latencies for Cache Misses, TLB Misses, and PTW Walk Stall Modeling unit test.
     unit_test_realistic_tlb_and_cache_miss_latencies();
+    // Run Operating System Demand Page Fault Penalty and Core Stall Modeling unit test.
+    unit_test_page_fault_penalty();
 }
 
 } // namespace drmemtrace

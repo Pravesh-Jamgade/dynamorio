@@ -218,6 +218,10 @@ page_table_walker_t::walk(const memref_t &memref, addr_t vaddr, ptw_result_t *re
     if (walk_latency == 0) { // Check zero walk latency:
         walk_latency = dram_latency_; // Default to DRAM latency.
     }
+    // If this walk triggered an OS first-touch demand page fault, add the OS kernel fault penalty.
+    if (local_result.is_page_fault && page_fault_penalty_ > 0) { // Check page fault and non-zero penalty:
+        walk_latency += page_fault_penalty_; // Add OS page allocation and zeroing latency penalty.
+    }
     // Store the final number of 8-byte memory reads performed during this walk.
     local_result.num_memory_reads = memory_reads;
     local_result.total_latency_cycles = walk_latency; // Store total latency in walk result.

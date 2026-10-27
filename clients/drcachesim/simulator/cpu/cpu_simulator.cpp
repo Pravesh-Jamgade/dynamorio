@@ -119,6 +119,8 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         walkers_[i]->set_sector_size(sector);
         // Configure hardware walker latencies (PWC=4, L1D=4, L2=14, L3=34, DRAM).
         walkers_[i]->set_latencies(4, 4, 14, 34, knobs_.dram_latency);
+        // Configure OS demand page fault latency penalty.
+        walkers_[i]->set_page_fault_penalty(knobs_.page_fault_penalty);
 
         // Configure L2 TLB sector size.
         l2_tlbs_[i]->set_sector_size(sector);
@@ -251,6 +253,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     int64_t total_branch_squash_cycles = 0; // Aggregate branch squash cycles.
     int64_t total_icache_miss_cycles = 0;   // Aggregate L1I miss stall cycles.
     int64_t total_itlb_miss_cycles = 0;     // Aggregate L1 ITLB miss stall cycles.
+    int64_t total_page_fault_stall_cycles = 0; // Aggregate OS page fault stall cycles.
 
     int64_t bp_branches = 0;               // Aggregate branch count.
     int64_t bp_mispredicted = 0;           // Aggregate branch mispredictions.
@@ -281,6 +284,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             total_branch_squash_cycles += cores_[i]->branch_squash_cycles();                        // Squash cycles.
             total_icache_miss_cycles += cores_[i]->icache_miss_stall_cycles();                      // Icache stalls.
             total_itlb_miss_cycles += cores_[i]->itlb_miss_stall_cycles();                          // ITLB stalls.
+            total_page_fault_stall_cycles += cores_[i]->page_fault_stall_cycles();                  // Page fault stalls.
 
             bp_branches += cores_[i]->get_branch_predictor().total_branches();                    // Branches.
             bp_mispredicted += cores_[i]->get_branch_predictor().mispredicted_branches();          // Mispredicts.
@@ -389,6 +393,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "branch_squash_cycles, " << total_branch_squash_cycles << "\n";           // Output squash cycles.
     os << "icache_miss_stall_cycles, " << total_icache_miss_cycles << "\n";         // Output icache stalls.
     os << "itlb_miss_stall_cycles, " << total_itlb_miss_cycles << "\n";             // Output ITLB stalls.
+    os << "page_fault_stall_cycles, " << total_page_fault_stall_cycles << "\n";     // Output page fault stall cycles.
 
     // Output branch predictor metrics.
     os << "BP branches, " << bp_branches << "\n";                                   // Output branches.
@@ -666,6 +671,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
         os << "PTW 2MB walks, " << m_stats.get_walks_2mb() << "\n";                  // 2MB walks.
         os << "PTW 1GB walks, " << m_stats.get_walks_1gb() << "\n";                  // 1GB walks.
         os << "PTW page faults, " << m_stats.get_page_faults() << "\n";              // Page faults.
+        os << "PTW page fault penalty, " << knobs_.page_fault_penalty << "\n";       // OS page fault penalty.
         os << "PTW memory reads, " << m_stats.get_total_ptw_memory_reads() << "\n";  // PTE memory reads.
         os << "PWC hits, " << m_stats.get_pwc_hits() << "\n";                        // PWC hits.
         os << "PWC misses, " << m_stats.get_pwc_misses() << "\n";                    // PWC misses.

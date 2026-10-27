@@ -105,6 +105,9 @@ cpu_core_t::process_memref(const memref_t &memref)
                 uint64_t itlb_miss_penalty = (itlb_res.latency_cycles > 1) ? (itlb_res.latency_cycles - 1) : 0;
                 step_cycles(itlb_miss_penalty);
                 itlb_miss_stall_cycles_ += itlb_miss_penalty;
+                if (itlb_res.is_page_fault) {
+                    page_fault_stall_cycles_ += itlb_miss_penalty; // Track page fault stall cycles.
+                }
             }
         }
 
@@ -283,6 +286,9 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
                 memref.data.pc = instr.pc;
                 tlb_access_result_t t_res = dtlb_->request_with_latency(memref);
                 tlb_latency = t_res.latency_cycles;
+                if (t_res.is_page_fault) {
+                    page_fault_stall_cycles_ += (tlb_latency > 1) ? (tlb_latency - 1) : 0; // Record load page fault penalty.
+                }
             }
 
             // 3. Probe 3-Level Data Cache Hierarchy (L1D -> L2 -> L3 -> DRAM).
@@ -323,6 +329,9 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
             // Route store memory reference through L1 DTLB with exact translation latency.
             tlb_access_result_t t_res = dtlb_->request_with_latency(memref);
             tlb_latency = t_res.latency_cycles;
+            if (t_res.is_page_fault) {
+                page_fault_stall_cycles_ += (tlb_latency > 1) ? (tlb_latency - 1) : 0; // Record store page fault penalty.
+            }
         }
         // Store address calculation and translation completes at issue_cycle + tlb_latency.
         // It writes to Store Queue and drains to L1D upon in-order ROB commit.
@@ -460,6 +469,8 @@ cpu_core_t::reset()
     total_stores_ = 0;
     branch_squash_cycles_ = 0;
     icache_miss_stall_cycles_ = 0;
+    itlb_miss_stall_cycles_ = 0;
+    page_fault_stall_cycles_ = 0;
 }
 
 } // namespace drmemtrace

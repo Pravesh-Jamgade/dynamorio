@@ -121,6 +121,8 @@ print_usage(const char *prog_name)
     std::cout << "  --l3_assoc <N>           Shared unified L3 / LLC associativity (default: 16)\n";
     // Print PWC entries option explanation.
     std::cout << "  --pwc_entries <N>        Page Walk Cache entries per core (default: 32)\n";
+    // Print page fault penalty option explanation.
+    std::cout << "  --page_fault_penalty <N> OS demand page fault penalty in clock cycles (default: 2000)\n";
     // Print help option explanation.
     std::cout << "  --help, -h               Print this help message\n\n";
     // Print example command invocation.
@@ -318,6 +320,11 @@ main(int argc, char **argv)
         else if (arg == "--dram_latency" && i + 1 < argc) {
             // Parse DRAM latency.
             knobs.dram_latency = std::strtoull(argv[++i], nullptr, 0);
+        }
+        // Check for page fault penalty option.
+        else if ((arg == "--page_fault_penalty" || arg == "-page_fault_penalty") && i + 1 < argc) {
+            // Parse OS demand page fault penalty.
+            knobs.page_fault_penalty = std::strtoull(argv[++i], nullptr, 0);
         }
         // Positional argument without prefix treated as trace path.
         else if (arg[0] != '-' && trace_path.empty()) {

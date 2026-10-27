@@ -113,6 +113,7 @@ struct cpu_simulator_knobs_t {
         , l3_wq_capacity(64)                    // 64 Write Queue entries for L3.
         , l3_pq_capacity(64)                    // 64 Prefetch Queue entries for L3.
         , dram_latency(150)                     // 150-cycle main memory DRAM latency.
+        , page_fault_penalty(2000)              // 2000-cycle OS demand page fault servicing latency.
         , sim_refs(0)                           // Default 0: unlimited references simulated.
         , heartbeat_interval(10000000)          // Default 10M simulated instructions heartbeat.
         , stats_file("stats.log")               // Default output file for CSV simulation stats.
@@ -166,6 +167,7 @@ struct cpu_simulator_knobs_t {
     size_t l3_wq_capacity;                      // L3 Write Queue size.
     size_t l3_pq_capacity;                      // L3 Prefetch Queue size.
     uint64_t dram_latency;                      // DRAM access latency in cycles.
+    uint64_t page_fault_penalty;                 // OS first-touch demand page fault penalty in cycles.
     uint64_t sim_refs;                          // Max references to simulate (0 = unlimited).
     uint64_t heartbeat_interval;                // Instruction interval between progress heartbeats (0 disables).
     std::string stats_file;                     // Output file path to write CSV statistics (default stats.log).
