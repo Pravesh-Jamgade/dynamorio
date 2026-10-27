@@ -53,6 +53,16 @@ namespace dynamorio {  // Outer DynamoRIO namespace.
 namespace drmemtrace { // DrMemtrace simulation namespace.
 
 /**
+ * @brief Detailed outcome of a translation request through the TLB hierarchy.
+ */
+struct tlb_access_result_t {
+    bool hit_l1 = false;         // True if satisfied by L1 TLB hit.
+    bool hit_l2 = false;         // True if satisfied by unified L2 TLB hit.
+    bool ptw_walk = false;       // True if required hardware Page Table Walk to memory.
+    uint64_t latency_cycles = 1; // Total translation latency in processor cycles.
+};
+
+/**
  * @brief Represents a single hardware TLB device (base class implements LFU policy).
  */
 class tlb_t : public caching_device_t {
@@ -65,6 +75,8 @@ public:
         , last_pid_(0)                  // Initialize cached last PID to 0.
         , page_table_walker_(nullptr)   // No page table walker attached initially.
         , huge_page_detector_(nullptr)  // No huge page detector attached initially.
+        , hit_latency_(1)               // Default 1-cycle hit latency.
+        , last_access_result_()         // Initialize default access result.
     {
     }
 
@@ -74,6 +86,52 @@ public:
      */
     void
     request(const memref_t &memref) override;
+
+    /**
+     * @brief Processes a memory reference and returns detailed translation outcome and latency.
+     */
+    tlb_access_result_t
+    request_with_latency(const memref_t &memref)
+    {
+        request(memref);            // Execute standard request.
+        return last_access_result_; // Return translation result with exact latency.
+    }
+
+    /**
+     * @brief Returns the translation result from the most recent request.
+     */
+    const tlb_access_result_t &
+    get_last_access_result() const
+    {
+        return last_access_result_; // Return last access result.
+    }
+
+    /**
+     * @brief Returns the latency in cycles of the most recent translation.
+     */
+    uint64_t
+    get_last_latency() const
+    {
+        return last_access_result_.latency_cycles; // Return last translation latency.
+    }
+
+    /**
+     * @brief Sets the hit latency for this TLB level.
+     */
+    void
+    set_hit_latency(uint64_t hit_latency)
+    {
+        hit_latency_ = (hit_latency > 0) ? hit_latency : 1; // Set hit latency in cycles.
+    }
+
+    /**
+     * @brief Returns the configured hit latency for this TLB level.
+     */
+    uint64_t
+    get_hit_latency() const
+    {
+        return hit_latency_; // Return hit latency in cycles.
+    }
 
     /**
      * @brief Attaches a hardware page table walker to service misses when parent_ == NULL.
@@ -202,6 +260,10 @@ protected:
     const huge_page_detector_t *huge_page_detector_;
     // Configured sector size (1 = baseline, 2, 4, 8 PTEs per sector block).
     size_t sector_size_ = 1;
+    // Configured hit latency in processor clock cycles.
+    uint64_t hit_latency_ = 1;
+    // Outcome and latency of the most recent translation request.
+    tlb_access_result_t last_access_result_;
 };
 
 /**

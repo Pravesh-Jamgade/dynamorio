@@ -117,9 +117,13 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
 
         // Configure walker sector size so leaf walks fetch full sector chunks into cache.
         walkers_[i]->set_sector_size(sector);
+        // Configure hardware walker latencies (PWC=4, L1D=4, L2=14, L3=34, DRAM).
+        walkers_[i]->set_latencies(4, 4, 14, 34, knobs_.dram_latency);
 
         // Configure L2 TLB sector size.
         l2_tlbs_[i]->set_sector_size(sector);
+        // Configure unified L2 TLB hit latency (9 cycles).
+        l2_tlbs_[i]->set_hit_latency(9);
         // Initialize L2 TLB and attach the hardware Page Table Walker.
         l2_tlbs_[i]->init(l2_assoc, static_cast<int>(l2_block_size), l2_num_blocks, nullptr,
                           new tlb_stats_t(static_cast<int>(knobs_.page_size)));
@@ -128,10 +132,12 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         l2_tlbs_[i]->set_page_table_walker(walkers_[i].get());
 
         // Initialize L1 ITLB and L1 DTLB, parenting them to L2 TLB.
+        itlbs_[i]->set_hit_latency(1); // 1-cycle L1 ITLB hit latency.
         itlbs_[i]->init(32, static_cast<int>(knobs_.page_size), 32, l2_tlbs_[i].get(),
                         new tlb_stats_t(static_cast<int>(knobs_.page_size)));
         // Set L1 ITLB capacity in entries.
         itlbs_[i]->get_stats()->set_device_capacity(32);
+        dtlbs_[i]->set_hit_latency(1); // 1-cycle L1 DTLB hit latency.
         dtlbs_[i]->init(32, static_cast<int>(knobs_.page_size), 32, l2_tlbs_[i].get(),
                         new tlb_stats_t(static_cast<int>(knobs_.page_size)));
         // Set L1 DTLB capacity in entries.
@@ -244,6 +250,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     int64_t total_stores = 0;              // Aggregate store instructions.
     int64_t total_branch_squash_cycles = 0; // Aggregate branch squash cycles.
     int64_t total_icache_miss_cycles = 0;   // Aggregate L1I miss stall cycles.
+    int64_t total_itlb_miss_cycles = 0;     // Aggregate L1 ITLB miss stall cycles.
 
     int64_t bp_branches = 0;               // Aggregate branch count.
     int64_t bp_mispredicted = 0;           // Aggregate branch mispredictions.
@@ -273,6 +280,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             total_stores += cores_[i]->total_stores();                                             // Stores.
             total_branch_squash_cycles += cores_[i]->branch_squash_cycles();                        // Squash cycles.
             total_icache_miss_cycles += cores_[i]->icache_miss_stall_cycles();                      // Icache stalls.
+            total_itlb_miss_cycles += cores_[i]->itlb_miss_stall_cycles();                          // ITLB stalls.
 
             bp_branches += cores_[i]->get_branch_predictor().total_branches();                    // Branches.
             bp_mispredicted += cores_[i]->get_branch_predictor().mispredicted_branches();          // Mispredicts.
@@ -380,6 +388,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "stores, " << total_stores << "\n";                                       // Output total stores.
     os << "branch_squash_cycles, " << total_branch_squash_cycles << "\n";           // Output squash cycles.
     os << "icache_miss_stall_cycles, " << total_icache_miss_cycles << "\n";         // Output icache stalls.
+    os << "itlb_miss_stall_cycles, " << total_itlb_miss_cycles << "\n";             // Output ITLB stalls.
 
     // Output branch predictor metrics.
     os << "BP branches, " << bp_branches << "\n";                                   // Output branches.

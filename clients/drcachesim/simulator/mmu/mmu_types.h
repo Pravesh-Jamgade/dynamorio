@@ -498,6 +498,7 @@ struct ptw_result_t {
     std::vector<ptw_step_record_t> steps; // Ordered sequence of radix walk steps.
     size_t sector_size = 1;      // Sector size (1 = baseline, 2, 4, or 8 PTEs).
     std::vector<ptw_sector_entry_t> sector_entries; // Populated sector entries for L2 TLB fill.
+    uint64_t total_latency_cycles = 0; // Total walk execution latency in processor cycles.
 };
 
 } // namespace drmemtrace

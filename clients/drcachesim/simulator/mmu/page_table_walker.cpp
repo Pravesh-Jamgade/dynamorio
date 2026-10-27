@@ -184,6 +184,11 @@ page_table_walker_t::walk(const memref_t &memref, addr_t vaddr, ptw_result_t *re
             }
         }
     }
+    // Calculate total walk latency in processor cycles.
+    uint64_t walk_latency = 0; // Accumulated latency in cycles.
+    if (deepest_pwc_hit_idx >= 0) { // If higher levels were satisfied by PWC:
+        walk_latency += pwc_hit_latency_; // Charge PWC directory lookup latency.
+    }
     // Now execute the actual 8-byte PTE memory reads for all steps after deepest_pwc_hit_idx.
     int memory_reads = 0;
     for (size_t i = static_cast<size_t>(deepest_pwc_hit_idx + 1);
@@ -194,13 +199,29 @@ page_table_walker_t::walk(const memref_t &memref, addr_t vaddr, ptw_result_t *re
         step.cache_hit_level =
             issue_pte_cache_read(memref, step.entry_paddr, step.level); // Issue read & save hit level.
         ++memory_reads; // Increment count of memory reads issued in this walk.
+        // Accumulate memory read latency based on the cache level that serviced the PTE read.
+        if (step.cache_hit_level == ptw_cache_hit_level_t::HIT_L1D) { // Hit in L1D:
+            walk_latency += l1d_hit_latency_; // Add L1D latency.
+        } else if (step.cache_hit_level == ptw_cache_hit_level_t::HIT_L2) { // Hit in L2:
+            walk_latency += l2_hit_latency_; // Add L2 latency.
+        } else if (step.cache_hit_level == ptw_cache_hit_level_t::HIT_L3) { // Hit in L3:
+            walk_latency += l3_hit_latency_; // Add L3 latency.
+        } else { // Serviced by main memory DRAM:
+            walk_latency += dram_latency_; // Add DRAM latency.
+        }
         // If this step is an intermediate directory, insert it into the PWC for future walks.
         if (!step.is_leaf && pwc_.is_enabled()) {
             pwc_.insert(pid, step.level, vaddr, step.next_paddr);
         }
     }
+    // Fallback minimum walk latency if no steps were traversed.
+    if (walk_latency == 0) { // Check zero walk latency:
+        walk_latency = dram_latency_; // Default to DRAM latency.
+    }
     // Store the final number of 8-byte memory reads performed during this walk.
     local_result.num_memory_reads = memory_reads;
+    local_result.total_latency_cycles = walk_latency; // Store total latency in walk result.
+    last_walk_latency_ = walk_latency; // Store last walk duration on the walker instance.
     // Record the completed walk in the core's MMU statistics collector.
     stats_.record_walk(local_result);
     // Copy local_result to `result_out` if the caller provided an output pointer.

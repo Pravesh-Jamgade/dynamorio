@@ -184,6 +184,29 @@ public:
         return sector_size_; // Return sector size.
     }
 
+    /**
+     * @brief Configures memory access latencies used during radix page table walks.
+     */
+    void
+    set_latencies(uint64_t pwc_lat, uint64_t l1d_lat, uint64_t l2_lat, uint64_t l3_lat,
+                  uint64_t dram_lat)
+    {
+        pwc_hit_latency_ = (pwc_lat > 0) ? pwc_lat : 1;       // PWC hit latency.
+        l1d_hit_latency_ = (l1d_lat > 0) ? l1d_lat : 1;       // L1D hit latency for PTE read.
+        l2_hit_latency_ = (l2_lat > 0) ? l2_lat : 1;         // L2 hit latency for PTE read.
+        l3_hit_latency_ = (l3_lat > 0) ? l3_lat : 1;         // L3 hit latency for PTE read.
+        dram_latency_ = (dram_lat > 0) ? dram_lat : 1;       // DRAM access latency for PTE read.
+    }
+
+    /**
+     * @brief Returns the total latency in cycles incurred by the most recent page table walk.
+     */
+    uint64_t
+    get_last_walk_latency() const
+    {
+        return last_walk_latency_; // Return last walk duration in cycles.
+    }
+
 private:
     // Issues a physical memory read for a PTE (or full sector of PTEs) into `ptw_data_cache_` if attached
     // and returns the hierarchy level where the read was satisfied (L1D, L2, L3, DRAM).
@@ -197,6 +220,12 @@ private:
     mmu_stats_t stats_;                             // Per-core MMU & PTW statistics.
     caching_device_t *ptw_data_cache_;              // Optional coupled data cache.
     size_t sector_size_ = 1;                        // Configured sector size (1, 2, 4, or 8 PTEs).
+    uint64_t pwc_hit_latency_ = 4;                  // Latency for Page Walk Cache hit.
+    uint64_t l1d_hit_latency_ = 4;                  // Latency for PTE read hitting in L1D.
+    uint64_t l2_hit_latency_ = 14;                  // Latency for PTE read hitting in L2 (L1D + L2).
+    uint64_t l3_hit_latency_ = 34;                  // Latency for PTE read hitting in L3 (L1D + L2 + L3).
+    uint64_t dram_latency_ = 184;                   // Latency for PTE read hitting in DRAM (caches + DRAM).
+    uint64_t last_walk_latency_ = 0;                // Latency in cycles of the last executed walk.
 };
 
 } // namespace drmemtrace

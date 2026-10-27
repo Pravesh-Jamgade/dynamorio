@@ -99,7 +99,13 @@ cpu_core_t::process_memref(const memref_t &memref)
 
         // Route instruction fetch through L1 Instruction TLB if connected.
         if (itlb_ != nullptr) {
-            itlb_->request(memref);
+            tlb_access_result_t itlb_res = itlb_->request_with_latency(memref);
+            if (!itlb_res.hit_l1) {
+                // If ITLB misses, Front-End stalls fetching until translation completes!
+                uint64_t itlb_miss_penalty = (itlb_res.latency_cycles > 1) ? (itlb_res.latency_cycles - 1) : 0;
+                step_cycles(itlb_miss_penalty);
+                itlb_miss_stall_cycles_ += itlb_miss_penalty;
+            }
         }
 
         // Route instruction fetch through L1 Instruction Cache if connected.
@@ -275,7 +281,8 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
                 memref.data.pid = instr.pid;
                 memref.data.tid = instr.tid;
                 memref.data.pc = instr.pc;
-                dtlb_->request(memref);
+                tlb_access_result_t t_res = dtlb_->request_with_latency(memref);
+                tlb_latency = t_res.latency_cycles;
             }
 
             // 3. Probe 3-Level Data Cache Hierarchy (L1D -> L2 -> L3 -> DRAM).
@@ -292,11 +299,12 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
                 cache_latency = c_res.latency_cycles;
             }
 
-            // Total load completion latency.
+            // Total load completion latency: translation latency + cache latency.
             completion_cycle = issue_cycle + tlb_latency + cache_latency;
         }
     } else if (instr.op_type == cpu_op_type_t::OP_STORE) {
         // Translate store memory address via L1 Data TLB during Address Generation (AGU).
+        uint64_t tlb_latency = 1; // Default 1-cycle translation.
         if (dtlb_ != nullptr) {
             // Build synthetic memory reference for store DTLB translation.
             memref_t memref = {};
@@ -312,12 +320,13 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
             memref.data.tid = instr.tid;
             // Set instruction program counter.
             memref.data.pc = instr.pc;
-            // Route store memory reference through L1 DTLB.
-            dtlb_->request(memref);
+            // Route store memory reference through L1 DTLB with exact translation latency.
+            tlb_access_result_t t_res = dtlb_->request_with_latency(memref);
+            tlb_latency = t_res.latency_cycles;
         }
-        // Store instructions write their value into the Store Queue in 1 cycle,
-        // and only drain to the L1D cache upon in-order ROB commit!
-        completion_cycle = issue_cycle + 1;
+        // Store address calculation and translation completes at issue_cycle + tlb_latency.
+        // It writes to Store Queue and drains to L1D upon in-order ROB commit.
+        completion_cycle = issue_cycle + tlb_latency;
     } else {
         // General ALU instructions complete after configured execution latency.
         completion_cycle = issue_cycle + knobs_.alu_latency;

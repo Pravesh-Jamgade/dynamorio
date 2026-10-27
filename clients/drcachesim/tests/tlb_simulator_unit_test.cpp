@@ -1726,22 +1726,23 @@ unit_test_cold_capacity_compulsory_and_reuse_histogram()
     // 2. Verify LLC Reuse Distance Histogram Power-of-2 Binning (bounded to 1024).
     const auto &hist = c_stats.get_reuse_histogram();                               // Get histogram vector.
     const auto &labels = caching_device_stats_t::get_reuse_histogram_labels();     // Get bin labels vector.
-    // Labels vector must contain exactly 14 bins: 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, >1024, inf.
+    // Labels vector must contain exactly 14 bins: 0, 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129-256, 257-512, 513-1024, >1024, inf.
     assert(labels.size() == 14);                                                    // Verify exactly 14 bin labels.
     assert(hist.size() == 14);                                                      // Verify exactly 14 histogram bins.
     assert(labels[0] == "0");                                                       // Verify bin 0 label is "0".
     assert(labels[1] == "1");                                                       // Verify bin 1 label is "1".
     assert(labels[2] == "2");                                                       // Verify bin 2 label is "2".
-    assert(labels[3] == "4");                                                       // Verify bin 3 label is "4".
-    assert(labels[10] == "512");                                                    // Verify bin 10 label is "512".
-    assert(labels[11] == "1024");                                                   // Verify bin 11 label is "1024".
+    assert(labels[3] == "3-4");                                                     // Verify bin 3 label is range "3-4".
+    assert(labels[4] == "5-8");                                                     // Verify bin 4 label is range "5-8".
+    assert(labels[10] == "257-512");                                                // Verify bin 10 label is range "257-512".
+    assert(labels[11] == "513-1024");                                               // Verify bin 11 label is range "513-1024".
     assert(labels[12] == ">1024");                                                  // Verify bin 12 label is ">1024".
     assert(labels[13] == "inf");                                                    // Verify bin 13 label is "inf".
 
     // All 5 initial first-time references (0x1000..0x10c0, 0x1100) have distance = inf.
     assert(hist[13] == 5); // 5 compulsory accesses in inf bin (index 13).
-    // Re-accessing 0x1000 had reuse distance = 4: falls into bin 3 (label "4").
-    assert(hist[3] == 1);  // 1 event in bin 4 (index 3).
+    // Re-accessing 0x1000 had reuse distance = 4: falls into bin 3 (label "3-4").
+    assert(hist[3] == 1);  // 1 event in bin 3 (range 3-4).
     // Immediate repeat hit on 0x1000 had reuse distance = 0: falls into bin 0 (label "0").
     assert(hist[0] == 1);  // 1 event in bin 0 (index 0).
 
@@ -1795,6 +1796,54 @@ unit_test_cold_capacity_compulsory_and_reuse_histogram()
     assert(t_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 1);   // Exactly 1 capacity miss recorded!
 }
 
+// Test 17: Realistic Latencies for Cache Misses, TLB Misses, and PTW Walk Stall Modeling.
+static void
+unit_test_realistic_tlb_and_cache_miss_latencies()
+{
+    // 1. Configure CPU simulator with sector size 8 and DRAM latency 150.
+    cpu_simulator_knobs_t knobs;                                                    // Instantiate knobs.
+    knobs.num_cores = 1;                                                            // 1 simulated CPU core.
+    knobs.l2_tlb_sector_size = 8;                                                   // Enable 8-entry sector mode.
+    knobs.dram_latency = 150;                                                       // 150-cycle main memory DRAM latency.
+    cpu_simulator_t sim(knobs);                                                     // Construct CPU simulator.
+
+    tlb_t *dtlb = sim.get_dtlb(0);                                                  // Retrieve core 0 DTLB.
+    assert(dtlb != nullptr);                                                         // Verify non-null DTLB.
+
+    // 2. Perform first access to virtual page 0x300000 (PTE 0 in sector 0x300000..0x307000).
+    memref_t ref1 = {};                                                             // Initialize memref.
+    ref1.data.type = TRACE_TYPE_READ;                                               // Read type.
+    ref1.data.pid = 9999;                                                           // Process ID.
+    ref1.data.tid = 1;                                                              // Thread ID.
+    ref1.data.addr = 0x300000ULL;                                                   // Page 0 address.
+    ref1.data.size = 8;                                                             // Access size.
+    ref1.data.pc = 0x400000ULL;                                                     // PC.
+
+    tlb_access_result_t res1 = dtlb->request_with_latency(ref1);                    // Request translation.
+    // First reference misses DTLB and L2 TLB, triggering a Page Table Walk!
+    assert(!res1.hit_l1);                                                           // Miss in L1 DTLB.
+    assert(!res1.hit_l2);                                                           // Miss in L2 TLB.
+    assert(res1.ptw_walk);                                                          // Required PTW walk.
+    // Total latency must reflect L1 hit (1) + L2 probe (9) + PTW latency (>= 184).
+    assert(res1.latency_cycles >= 194);                                             // Translation latency >= 194 cycles.
+
+    // 3. Perform second access to virtual page 0x301000 (PTE 1 in same sector block).
+    memref_t ref2 = ref1;                                                           // Copy ref template.
+    ref2.data.addr = 0x301000ULL;                                                   // Adjacent page in same sector.
+    tlb_access_result_t res2 = dtlb->request_with_latency(ref2);                    // Request translation.
+    // L1 DTLB misses, BUT L2 TLB hits due to sector co-allocation from first walk!
+    assert(!res2.hit_l1);                                                           // Miss in L1 DTLB.
+    assert(res2.hit_l2);                                                            // Hit in L2 TLB!
+    assert(!res2.ptw_walk);                                                         // Bypassed PTW walk!
+    // Total latency is fast L1 (1) + L2 hit (9) = 10 cycles!
+    assert(res2.latency_cycles == 10);                                              // Exact 10-cycle L2 TLB hit latency!
+
+    // 4. Repeat immediate access to 0x301000: now cached in L1 DTLB fast path!
+    tlb_access_result_t res3 = dtlb->request_with_latency(ref2);                    // Request translation.
+    assert(res3.hit_l1);                                                            // Hit in L1 DTLB!
+    assert(res3.latency_cycles == 1);                                               // Exact 1-cycle L1 DTLB hit latency!
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1833,6 +1882,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_sector_l2_tlb();
     // Run Cold, Capacity, Compulsory Misses and LLC Reuse Distance Histogram unit test.
     unit_test_cold_capacity_compulsory_and_reuse_histogram();
+    // Run Realistic Latencies for Cache Misses, TLB Misses, and PTW Walk Stall Modeling unit test.
+    unit_test_realistic_tlb_and_cache_miss_latencies();
 }
 
 } // namespace drmemtrace

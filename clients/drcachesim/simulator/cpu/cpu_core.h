@@ -175,6 +175,7 @@ public:
     int64_t total_stores() const { return total_stores_; } // Total store operations.
     int64_t branch_squash_cycles() const { return branch_squash_cycles_; } // Penalty cycles from squashes.
     int64_t icache_miss_stall_cycles() const { return icache_miss_stall_cycles_; } // L1I miss stall cycles.
+    int64_t itlb_miss_stall_cycles() const { return itlb_miss_stall_cycles_; } // L1 ITLB miss stall cycles.
     double get_ipc() const; // Computed instructions per cycle.
     double get_cpi() const; // Computed cycles per instruction.
 
@@ -223,6 +224,7 @@ private:
     int64_t total_stores_ = 0;                 // Total store instructions executed.
     int64_t branch_squash_cycles_ = 0;         // Cycles lost to branch misprediction flushes.
     int64_t icache_miss_stall_cycles_ = 0;     // Front-End stall cycles due to L1I cache misses.
+    int64_t itlb_miss_stall_cycles_ = 0;       // Front-End stall cycles due to L1 ITLB translation misses.
 };
 
 } // namespace drmemtrace

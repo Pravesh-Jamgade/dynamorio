@@ -91,6 +91,10 @@ tlb_t::compute_canonical_tag(memref_pid_t pid, addr_t addr, page_size_kind_t *ki
 void
 tlb_t::request(const memref_t &memref_in)
 {
+    // Reset translation result for this request.
+    last_access_result_ = tlb_access_result_t();
+    last_access_result_.latency_cycles = hit_latency_; // Default hit latency.
+
     // Extract the process ID from the incoming memory reference.
     memref_pid_t pid = memref_in.data.pid;
     // Compute the inclusive final byte address touched by this memory reference.
@@ -130,6 +134,10 @@ tlb_t::request(const memref_t &memref_in)
             }
             // Update replacement policy state (e.g., LFU counter or LRU age).
             access_update(last_block_idx_, last_way_);
+            // Record translation outcome for fast path hit.
+            last_access_result_.hit_l1 = (parent_ != nullptr);
+            last_access_result_.hit_l2 = (parent_ == nullptr);
+            last_access_result_.latency_cycles = hit_latency_;
             return;
         }
     }
@@ -180,6 +188,10 @@ tlb_t::request(const memref_t &memref_in)
                     // Record sector block tag hit on regular path hit.
                     ((tlb_stats_t *)stats_)->record_sector_tag_hit();
                 }
+                // Record translation outcome for hit in this TLB.
+                last_access_result_.hit_l1 = (parent_ != nullptr);
+                last_access_result_.hit_l2 = (parent_ == nullptr);
+                last_access_result_.latency_cycles = hit_latency_;
                 break;
             }
         }
@@ -237,6 +249,11 @@ tlb_t::request(const memref_t &memref_in)
                 // Retrieve the resolved PPN and page size kind installed in the parent TLB.
                 ((tlb_t *)parent_)
                     ->lookup_entry(pid, memref.data.addr, &resolved_ppn, &resolved_kind);
+                const auto &p_res = ((tlb_t *)parent_)->get_last_access_result();
+                last_access_result_.hit_l1 = false;
+                last_access_result_.hit_l2 = p_res.hit_l2;
+                last_access_result_.ptw_walk = p_res.ptw_walk;
+                last_access_result_.latency_cycles = hit_latency_ + p_res.latency_cycles;
             } else if (page_table_walker_ != nullptr) {
                 // This is a last-level (L2) TLB miss and a hardware page table walker is
                 // attached: execute the multi-level radix page table walk!
@@ -245,6 +262,10 @@ tlb_t::request(const memref_t &memref_in)
                 if (page_table_walker_->walk(memref, memref.data.addr, &ptw_res)) {
                     resolved_ppn = ptw_res.page_base_paddr >> 12;
                     resolved_kind = ptw_res.page_size_kind;
+                    last_access_result_.hit_l1 = false;
+                    last_access_result_.hit_l2 = false;
+                    last_access_result_.ptw_walk = true;
+                    last_access_result_.latency_cycles = hit_latency_ + ptw_res.total_latency_cycles;
                     // Install all sector entries brought in from the leaf PTE block!
                     if (sector_size_ > 1) {
                         typed_entry->sector_size_ = sector_size_;
@@ -262,6 +283,11 @@ tlb_t::request(const memref_t &memref_in)
                         }
                     }
                 }
+            } else {
+                last_access_result_.hit_l1 = false;
+                last_access_result_.hit_l2 = false;
+                last_access_result_.ptw_walk = false;
+                last_access_result_.latency_cycles = hit_latency_ + 150;
             }
             // Install the translation into the selected way of this TLB.
             tlb_entry->tag_ = cur_tag;

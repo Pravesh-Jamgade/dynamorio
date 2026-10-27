@@ -326,12 +326,12 @@ caching_device_stats_t::get_capacity_in_blocks() const
 const std::vector<std::string> &
 caching_device_stats_t::get_reuse_histogram_labels()
 {
-    // Static vector of power-of-2 reuse distance histogram bin labels up to 1024.
+    // Static vector of power-of-2 reuse distance histogram bin ranges up to 1024.
     static const std::vector<std::string> labels = {
-        "0", "1", "2", "4", "8", "16", "32", "64", "128", "256", "512",
-        "1024", ">1024", "inf"
+        "0", "1", "2", "3-4", "5-8", "9-16", "17-32", "33-64", "65-128", "129-256", "257-512",
+        "513-1024", ">1024", "inf"
     };
-    return labels; // Return power-of-2 bin label vector.
+    return labels; // Return power-of-2 bin range vector.
 }
 
 void
