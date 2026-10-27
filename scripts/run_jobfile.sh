@@ -31,6 +31,10 @@ TARGET_LINES=""
 GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")"
 # Export GIT_COMMIT_ID to environment for simulator process detection.
 export GIT_COMMIT_ID="$GIT_COMMIT"
+# Export REPO_ROOT so relative config and data files resolve deterministically.
+export REPO_ROOT="$REPO_ROOT"
+# Switch to repository root directory.
+cd "$REPO_ROOT"
 
 # Generate a globally unique execution identifier combining high-resolution epoch, PID, and randomness.
 RUN_ID="$(date +%s%N 2>/dev/null || date +%s)_pid${$}_rnd${RANDOM}"

@@ -40,6 +40,8 @@
 #include <sstream>
 // Include console output for logging.
 #include <iostream>
+// Include unistd for readlink and path inspection.
+#include <unistd.h>
 // Include algorithm for string manipulation.
 #include <algorithm>
 
@@ -150,8 +152,60 @@ ini_config_t::load_internal(const std::string &filepath, std::set<std::string> &
     visited_files.insert(filepath);
 
     // Open configuration file stream.
-    std::ifstream file(filepath.c_str());
-    // Verify file opened successfully.
+    std::string actual_path = filepath;
+    std::ifstream file(actual_path.c_str());
+    // If not found and path is relative, attempt resolving from fallback search paths.
+    if (!file.is_open() && !actual_path.empty() && actual_path.front() != '/') {
+        // Fallback 1: Check environment variable REPO_ROOT or DYNAMORIO_HOME.
+        const char *env_root = getenv("REPO_ROOT");
+        if (env_root == nullptr) {
+            env_root = getenv("DYNAMORIO_HOME");
+        }
+        if (env_root != nullptr) {
+            std::string try_path = std::string(env_root) + "/" + actual_path;
+            file.clear(); // Clear stream failbit before retrying open!
+            file.open(try_path.c_str());
+            if (file.is_open()) {
+                actual_path = try_path;
+            }
+        }
+    }
+    if (!file.is_open() && !actual_path.empty() && actual_path.front() != '/') {
+        // Fallback 2: Check relative to executable binary location (/proc/self/exe).
+        char exe_buf[1024];
+        ssize_t len = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+        if (len > 0) {
+            exe_buf[len] = '\0';
+            std::string exe_path(exe_buf);
+            size_t slash = exe_path.find_last_of('/');
+            if (slash != std::string::npos) {
+                std::string exe_dir = exe_path.substr(0, slash);
+                // Check relative to binary dir, parent dir (build/), and repo root (build/..).
+                std::vector<std::string> search_bases = { exe_dir, exe_dir + "/..", exe_dir + "/../.." };
+                for (const auto &base : search_bases) {
+                    std::string try_path = base + "/" + actual_path;
+                    file.clear(); // Clear stream failbit before retrying open!
+                    file.open(try_path.c_str());
+                    if (file.is_open()) {
+                        actual_path = try_path;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!file.is_open() && !actual_path.empty() && actual_path.front() != '/') {
+        // Fallback 3: Toggle "configs/" prefix.
+        std::string try_path = (actual_path.find("configs/") == 0)
+            ? actual_path.substr(8)
+            : ("configs/" + actual_path);
+        file.clear(); // Clear stream failbit before retrying open!
+        file.open(try_path.c_str());
+        if (file.is_open()) {
+            actual_path = try_path;
+        }
+    }
+    // Verify file opened successfully after all search attempts.
     if (!file.is_open()) {
         std::cerr << "[INI Parser] Error: Unable to open config file " << filepath << "\n";
         return false;
@@ -159,9 +213,9 @@ ini_config_t::load_internal(const std::string &filepath, std::set<std::string> &
 
     // Determine directory containing this file for relative path resolution.
     std::string base_dir = ".";
-    size_t last_slash = filepath.find_last_of("/\\");
+    size_t last_slash = actual_path.find_last_of("/\\");
     if (last_slash != std::string::npos) {
-        base_dir = filepath.substr(0, last_slash);
+        base_dir = actual_path.substr(0, last_slash);
     }
 
     // Read file line by line into stringstream.

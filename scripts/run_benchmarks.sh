@@ -32,6 +32,10 @@ SIM_REFS=""
 GUPS_MEM=""
 # Flag for dry run.
 DRY_RUN=0
+# Export REPO_ROOT so relative config and data files resolve deterministically.
+export REPO_ROOT="$REPO_ROOT"
+# Switch to repository root directory.
+cd "$REPO_ROOT"
 
 # Define usage information function.
 usage() {

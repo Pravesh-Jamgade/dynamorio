@@ -256,13 +256,38 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
         if (!op_cpu_config.get_value().empty()) {
             // Instantiate INI configuration parser.
             ini_config_t ini_parser;
-            // Attempt to load and parse the INI file.
-            if (ini_parser.load(op_cpu_config.get_value())) {
+            std::string cfg_path = op_cpu_config.get_value();
+            // Attempt to load and parse the INI file from given path.
+            bool loaded = ini_parser.load(cfg_path);
+            // If relative and not found, attempt resolution relative to DynamoRIO root directories.
+            if (!loaded && !cfg_path.empty() && cfg_path.front() != '/') {
+                std::string dr_root = op_dr_root.get_value();
+                if (!dr_root.empty()) {
+                    std::vector<std::string> search_bases = {
+                        dr_root,
+                        dr_root + "/..",
+                        dr_root + "/../.."
+                    };
+                    for (const auto &base : search_bases) {
+                        std::string try_path = base + "/" + cfg_path;
+                        if (ini_parser.load(try_path)) {
+                            loaded = true;
+                            cfg_path = try_path;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (loaded) {
                 // Apply INI settings to knobs.
                 ini_parser.apply_to_knobs(knobs);
+                knobs.config_file = cfg_path; // Store resolved configuration path.
             } else {
-                // Print warning on failure to load INI file.
-                ERRMSG("Warning: Failed to load CPU config file: %s\n", op_cpu_config.get_value().c_str());
+                // Fatal error: abort when user-specified config file cannot be found or loaded!
+                ERRMSG("FATAL ERROR: Failed to load CPU configuration file '%s'!\n"
+                       "Please verify that the file exists and the path is valid.\n",
+                       op_cpu_config.get_value().c_str());
+                return nullptr; // Terminate execution immediately rather than silently running with defaults.
             }
         }
         // Command-line flags can selectively override individual parameters if explicitly specified.
