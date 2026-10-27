@@ -238,6 +238,20 @@ analyzer_multi_t::create_analysis_tool_from_options(const std::string &tool)
     } else if (tool == CPU_SIMULATOR || tool == CPU_SIMULATOR_ALT) {
         // Instantiate configuration knobs for complete out-of-order CPU core simulation.
         cpu_simulator_knobs_t knobs;
+        // Record the path of the CPU INI configuration file used.
+        knobs.config_file = op_cpu_config.get_value();
+        // Record the git commit hash for reproducibility.
+#ifdef DYNAMORIO_GIT_COMMIT
+        knobs.commit_id = DYNAMORIO_GIT_COMMIT;
+#else
+        knobs.commit_id = "unknown";
+#endif
+        // Check if runtime environment variable GIT_COMMIT_ID is provided.
+        const char *env_git = getenv("GIT_COMMIT_ID");
+        if (env_git != nullptr && env_git[0] != '\0') {
+            // Apply environment commit ID.
+            knobs.commit_id = env_git;
+        }
         // Check if an INI configuration file was specified.
         if (!op_cpu_config.get_value().empty()) {
             // Instantiate INI configuration parser.

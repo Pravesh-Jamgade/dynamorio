@@ -293,6 +293,76 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     double overall_cpi = (total_retired > 0) ? (static_cast<double>(total_cycles) / total_retired) : 0.0; // CPI.
     double bp_mispredict_rate = (bp_branches > 0) ? (static_cast<double>(bp_mispredicted) / bp_branches) : 0.0; // Rate.
 
+    // Determine git commit ID string with runtime environment and build macro fallbacks.
+    std::string commit_str = knobs_.commit_id;
+    if (commit_str.empty() || commit_str == "unknown") {
+        // Check runtime environment variable GIT_COMMIT_ID.
+        const char *env_git = getenv("GIT_COMMIT_ID");
+        if (env_git != nullptr && env_git[0] != '\0') {
+            // Use environment commit ID.
+            commit_str = env_git;
+        }
+#ifdef DYNAMORIO_GIT_COMMIT
+        else {
+            // Use build-time commit definition.
+            commit_str = DYNAMORIO_GIT_COMMIT;
+        }
+#endif
+    }
+
+    // 1. Output simulation metadata: config file used and git commit ID.
+    os << "config_file, " << (knobs_.config_file.empty() ? "default" : knobs_.config_file) << "\n";
+    os << "commit_id, " << (commit_str.empty() ? "unknown" : commit_str) << "\n";
+
+    // 2. Output all CPU pipeline, cache hierarchy, MMU, and simulation configuration values.
+    os << "num_cores, " << knobs_.num_cores << "\n";
+    os << "fetch_width, " << knobs_.fetch_width << "\n";
+    os << "decode_width, " << knobs_.decode_width << "\n";
+    os << "dispatch_width, " << knobs_.dispatch_width << "\n";
+    os << "commit_width, " << knobs_.commit_width << "\n";
+    os << "rob_capacity, " << knobs_.rob_capacity << "\n";
+    os << "lq_capacity, " << knobs_.lq_capacity << "\n";
+    os << "sq_capacity, " << knobs_.sq_capacity << "\n";
+    os << "btb_entries, " << knobs_.btb_entries << "\n";
+    os << "branch_mispredict_penalty, " << knobs_.branch_mispredict_penalty << "\n";
+    os << "alu_latency, " << knobs_.alu_latency << "\n";
+    os << "enable_wrong_path, " << (knobs_.enable_wrong_path ? 1 : 0) << "\n";
+    os << "max_speculative_depth, " << knobs_.max_speculative_depth << "\n";
+    os << "line_size, " << knobs_.line_size << "\n";
+    os << "l1i_size, " << knobs_.l1i_size << "\n";
+    os << "l1i_assoc, " << knobs_.l1i_assoc << "\n";
+    os << "l1i_latency, " << knobs_.l1i_latency << "\n";
+    os << "l1i_mshr_capacity, " << knobs_.l1i_mshr_capacity << "\n";
+    os << "l1i_rq_capacity, " << knobs_.l1i_rq_capacity << "\n";
+    os << "l1i_pq_capacity, " << knobs_.l1i_pq_capacity << "\n";
+    os << "l1d_size, " << knobs_.l1d_size << "\n";
+    os << "l1d_assoc, " << knobs_.l1d_assoc << "\n";
+    os << "l1d_mshr_capacity, " << knobs_.l1d_mshr_capacity << "\n";
+    os << "l1d_rq_capacity, " << knobs_.l1d_rq_capacity << "\n";
+    os << "l1d_wq_capacity, " << knobs_.l1d_wq_capacity << "\n";
+    os << "l1d_pq_capacity, " << knobs_.l1d_pq_capacity << "\n";
+    os << "l2_size, " << knobs_.l2_size << "\n";
+    os << "l2_assoc, " << knobs_.l2_assoc << "\n";
+    os << "l2_mshr_capacity, " << knobs_.l2_mshr_capacity << "\n";
+    os << "l2_rq_capacity, " << knobs_.l2_rq_capacity << "\n";
+    os << "l2_wq_capacity, " << knobs_.l2_wq_capacity << "\n";
+    os << "l2_pq_capacity, " << knobs_.l2_pq_capacity << "\n";
+    os << "l3_size, " << knobs_.l3_size << "\n";
+    os << "l3_assoc, " << knobs_.l3_assoc << "\n";
+    os << "l3_mshr_capacity, " << knobs_.l3_mshr_capacity << "\n";
+    os << "l3_rq_capacity, " << knobs_.l3_rq_capacity << "\n";
+    os << "l3_wq_capacity, " << knobs_.l3_wq_capacity << "\n";
+    os << "l3_pq_capacity, " << knobs_.l3_pq_capacity << "\n";
+    os << "page_size, " << knobs_.page_size << "\n";
+    os << "pwc_entries, " << knobs_.pwc_entries << "\n";
+    os << "pwc_assoc, " << knobs_.pwc_assoc << "\n";
+    os << "l2_tlb_entries, " << knobs_.l2_tlb_entries << "\n";
+    os << "l2_tlb_assoc, " << knobs_.l2_tlb_assoc << "\n";
+    os << "l2_tlb_sector_size, " << knobs_.l2_tlb_sector_size << "\n";
+    os << "dram_latency, " << knobs_.dram_latency << "\n";
+    os << "sim_refs, " << knobs_.sim_refs << "\n";
+    os << "heartbeat_interval, " << knobs_.heartbeat_interval << "\n";
+
     // Output scalar metrics in CSV format.
     os << std::fixed << std::setprecision(4);                                       // Set precision.
     os << "ipc, " << overall_ipc << "\n";                                           // Output IPC.

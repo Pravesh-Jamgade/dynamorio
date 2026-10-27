@@ -27,6 +27,11 @@ STATS_ONLY=0
 # Optional list or range of job line numbers to run (empty means all).
 TARGET_LINES=""
 
+# Capture current git commit ID for reproducibility logging across all jobs.
+GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")"
+# Export GIT_COMMIT_ID to environment for simulator process detection.
+export GIT_COMMIT_ID="$GIT_COMMIT"
+
 # Define usage information function.
 usage() {
     # Print usage header.

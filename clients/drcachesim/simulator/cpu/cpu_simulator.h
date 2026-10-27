@@ -116,6 +116,8 @@ struct cpu_simulator_knobs_t {
         , sim_refs(0)                           // Default 0: unlimited references simulated.
         , heartbeat_interval(10000000)          // Default 10M simulated instructions heartbeat.
         , stats_file("stats.log")               // Default output file for CSV simulation stats.
+        , config_file("")                       // Path to INI configuration file used.
+        , commit_id("")                         // Git commit ID / hash of the codebase.
     {
     }
 
@@ -167,6 +169,8 @@ struct cpu_simulator_knobs_t {
     uint64_t sim_refs;                          // Max references to simulate (0 = unlimited).
     uint64_t heartbeat_interval;                // Instruction interval between progress heartbeats (0 disables).
     std::string stats_file;                     // Output file path to write CSV statistics (default stats.log).
+    std::string config_file;                    // Path to INI configuration file used.
+    std::string commit_id;                      // Git commit ID / hash of the codebase.
 };
 
 /**

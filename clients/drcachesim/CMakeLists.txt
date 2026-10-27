@@ -78,6 +78,19 @@ if (ARM AND CMAKE_COMPILER_IS_GNUCC)
   endif (GCC_HAS_NO_PSABI)
 endif ()
 
+# Extract git commit hash for tracking simulation reproducibility in statistics output.
+execute_process(
+  COMMAND git rev-parse HEAD
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  OUTPUT_VARIABLE DYNAMORIO_GIT_COMMIT
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+if (NOT DYNAMORIO_GIT_COMMIT)
+  set(DYNAMORIO_GIT_COMMIT "unknown")
+endif ()
+add_definitions(-DDYNAMORIO_GIT_COMMIT="${DYNAMORIO_GIT_COMMIT}")
+
 # i#2277: we use zlib if available to write and read compressed trace files,
 # and now to write zipfiles for fast seeking.
 if (ZLIB_FOUND)
@@ -474,8 +487,8 @@ endif ()
 
 # Out-of-Order CPU, MMU, and 3-Level Cache trace simulator CLI launcher.
 add_executable(run_cpu_sim simulator/cpu/run_cpu_sim.cpp)
-# Link against the core simulator library and frontend utilities.
-target_link_libraries(run_cpu_sim drmemtrace_simulator drfrontendlib)
+# Link against simulator, analyzer, frontend utilities, and zlib compression.
+target_link_libraries(run_cpu_sim drmemtrace_simulator drmemtrace_analyzer drfrontendlib ${zlib_libs})
 # Enable droption support for CLI options.
 use_DynamoRIO_extension(run_cpu_sim droption)
 # Depend on exported API headers.
