@@ -67,7 +67,7 @@ caching_device_stats_t::caching_device_stats_t(const std::string &miss_file,
     , num_conflict_misses_(0)
     , device_capacity_in_blocks_(0)
     , enable_histogram_(false)
-    , reuse_histogram_(28, 0)
+    , reuse_histogram_(14, 0) // Initialize power-of-2 histogram with 14 bins (0..1024, >1024, inf).
     , reuse_tracker_()
     , block_size_bits_(compute_log2(block_size))
     , num_child_hits_(0)
@@ -326,14 +326,12 @@ caching_device_stats_t::get_capacity_in_blocks() const
 const std::vector<std::string> &
 caching_device_stats_t::get_reuse_histogram_labels()
 {
-    // Static vector of power-of-2 reuse distance histogram bin labels.
+    // Static vector of power-of-2 reuse distance histogram bin labels up to 1024.
     static const std::vector<std::string> labels = {
         "0", "1", "2", "4", "8", "16", "32", "64", "128", "256", "512",
-        "1024", "2048", "4096", "8192", "16384", "32768", "65536", "131072",
-        "262144", "524288", "1048576", "2097152", "4194304", "8388608",
-        "16777216", ">16777216", "inf"
+        "1024", ">1024", "inf"
     };
-    return labels;
+    return labels; // Return power-of-2 bin label vector.
 }
 
 void
@@ -341,36 +339,36 @@ caching_device_stats_t::record_reuse_histogram_event(int64_t dist)
 {
     // Map negative distance (first-time reference / cold / compulsory) to inf bin.
     if (dist < 0) {
-        reuse_histogram_[27]++; // inf bin.
-        return;
+        reuse_histogram_[13]++; // inf bin (bin index 13).
+        return;                 // Done recording compulsory event.
     }
     // Handle distance 0 (immediate repeated access).
     if (dist == 0) {
-        reuse_histogram_[0]++; // Bin 0.
-        return;
+        reuse_histogram_[0]++; // Bin 0 (label "0").
+        return;                // Done recording distance 0.
     }
     // Handle distance 1 (1 unique block between references).
     if (dist == 1) {
-        reuse_histogram_[1]++; // Bin 1.
-        return;
+        reuse_histogram_[1]++; // Bin 1 (label "1").
+        return;                // Done recording distance 1.
     }
     // Handle distance 2 (2 unique blocks between references).
     if (dist == 2) {
-        reuse_histogram_[2]++; // Bin 2.
-        return;
+        reuse_histogram_[2]++; // Bin 2 (label "2").
+        return;                // Done recording distance 2.
     }
     // For distances >= 3, compute upper power-of-2 index ceil(log2(dist)).
-    uint64_t v = static_cast<uint64_t>(dist) - 1;
-    int bit = 0;
-    while (v > 0) {
-        v >>= 1;
-        bit++;
+    uint64_t v = static_cast<uint64_t>(dist) - 1; // Subtract 1 for ceiling calculation.
+    int bit = 0;                                  // Power-of-2 exponent tracker.
+    while (v > 0) {                               // Loop until all bits shifted out.
+        v >>= 1;                                  // Shift right by 1 bit.
+        bit++;                                    // Increment bit exponent.
     }
-    // Map powers of 2 up to 2^24 (16,777,216).
-    if (bit <= 24) {
-        reuse_histogram_[bit + 1]++; // Bins 3 (label 4) through 25 (label 16777216).
-    } else {
-        reuse_histogram_[26]++; // Bin 26 (>16777216).
+    // Map powers of 2 up to 2^10 (1024).
+    if (bit <= 10) {                              // If ceiling power of 2 is <= 1024 (bit <= 10):
+        reuse_histogram_[bit + 1]++;              // Map to bins 3 (label "4") through 11 (label "1024").
+    } else {                                      // If distance is greater than 1024:
+        reuse_histogram_[12]++;                   // Map to bin 12 (label ">1024").
     }
 }
 

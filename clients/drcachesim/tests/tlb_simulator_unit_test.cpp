@@ -1723,24 +1723,37 @@ unit_test_cold_capacity_compulsory_and_reuse_histogram()
     c_stats.access(ref, /*hit=*/true, nullptr);
     assert(c_stats.get_metric(metric_name_t::HITS) == 1);
 
-    // 2. Verify LLC Reuse Distance Histogram Power-of-2 Binning.
-    const auto &hist = c_stats.get_reuse_histogram();
-    const auto &labels = caching_device_stats_t::get_reuse_histogram_labels();
-    // Labels vector must contain exactly 28 bins: 0, 1, 2, 4, ..., 16777216, >16777216, inf.
-    assert(labels.size() == 28);
-    assert(hist.size() == 28);
-    assert(labels[0] == "0");
-    assert(labels[1] == "1");
-    assert(labels[2] == "2");
-    assert(labels[3] == "4");
-    assert(labels[27] == "inf");
+    // 2. Verify LLC Reuse Distance Histogram Power-of-2 Binning (bounded to 1024).
+    const auto &hist = c_stats.get_reuse_histogram();                               // Get histogram vector.
+    const auto &labels = caching_device_stats_t::get_reuse_histogram_labels();     // Get bin labels vector.
+    // Labels vector must contain exactly 14 bins: 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, >1024, inf.
+    assert(labels.size() == 14);                                                    // Verify exactly 14 bin labels.
+    assert(hist.size() == 14);                                                      // Verify exactly 14 histogram bins.
+    assert(labels[0] == "0");                                                       // Verify bin 0 label is "0".
+    assert(labels[1] == "1");                                                       // Verify bin 1 label is "1".
+    assert(labels[2] == "2");                                                       // Verify bin 2 label is "2".
+    assert(labels[3] == "4");                                                       // Verify bin 3 label is "4".
+    assert(labels[10] == "512");                                                    // Verify bin 10 label is "512".
+    assert(labels[11] == "1024");                                                   // Verify bin 11 label is "1024".
+    assert(labels[12] == ">1024");                                                  // Verify bin 12 label is ">1024".
+    assert(labels[13] == "inf");                                                    // Verify bin 13 label is "inf".
 
     // All 5 initial first-time references (0x1000..0x10c0, 0x1100) have distance = inf.
-    assert(hist[27] == 5); // 5 compulsory accesses in inf bin.
+    assert(hist[13] == 5); // 5 compulsory accesses in inf bin (index 13).
     // Re-accessing 0x1000 had reuse distance = 4: falls into bin 3 (label "4").
-    assert(hist[3] == 1);  // 1 event in bin 4.
+    assert(hist[3] == 1);  // 1 event in bin 4 (index 3).
     // Immediate repeat hit on 0x1000 had reuse distance = 0: falls into bin 0 (label "0").
-    assert(hist[0] == 1);  // 1 event in bin 0.
+    assert(hist[0] == 1);  // 1 event in bin 0 (index 0).
+
+    // Access 1025 distinct blocks to test >1024 histogram bin.
+    for (int i = 0; i < 1025; ++i) {                                                // Loop 1025 distinct blocks.
+        ref.data.addr = 0x500000ULL + static_cast<addr_t>(i * 64);                  // Unique address per block.
+        c_stats.access(ref, /*hit=*/false, nullptr);                                // Access unique block.
+    }                                                                               // End loop.
+    // Re-access 0x1000: reuse distance is > 1024, so it must fall into bin 12 (>1024).
+    ref.data.addr = 0x1000ULL;                                                      // Target block address.
+    c_stats.access(ref, /*hit=*/false, nullptr);                                    // Access block.
+    assert(hist[12] == 1);                                                          // Verify 1 event in bin 12 (>1024).
 
     // 3. Test TLB Cold, Compulsory, and Capacity Misses using tlb_stats_t.
     tlb_stats_t t_stats(4096);
