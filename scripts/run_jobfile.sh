@@ -357,6 +357,22 @@ execute_job() {
     # Print start notification with timestamp.
     echo "[START] [${start_time_str}] Job #${line_num} (${app_name}) running concurrently..."
 
+    # Rewrite stats_file argument in cmd to route directly into OUT_DIR if present.
+    local target_stats_file=""
+    if [[ "$cmd" =~ -stats_file[[:space:]]+([^[:space:]]+) ]]; then
+        # Capture original stats file path.
+        local orig_sfile="${BASH_REMATCH[1]}"
+        # Extract basename of stats file.
+        local sfile_base
+        sfile_base="$(basename "$orig_sfile")"
+        # Construct destination path inside OUT_DIR.
+        target_stats_file="${OUT_DIR}/${sfile_base}"
+        # Ensure target directory exists on disk.
+        mkdir -p "$(dirname "$target_stats_file")"
+        # Replace original path with target path in command string.
+        cmd="$(echo "$cmd" | sed -E "s|-stats_file[[:space:]]+[^[:space:]]+|-stats_file ${target_stats_file}|")"
+    fi
+
     # Record start time in epoch seconds.
     local t_start
     # Capture start epoch.
@@ -404,16 +420,12 @@ execute_job() {
         echo "================================================================================"
     } >> "$console_log"
 
-    # Extract target stats_file from the executed command line if specified.
-    local sfile_match
-    # Search for -stats_file argument value.
-    sfile_match="$(echo "$cmd" | grep -oE -- '-stats_file[[:space:]]+[^[:space:]]+' | awk '{print $2}')"
-    # Check if stats file exists on disk.
-    if [[ -n "$sfile_match" && -f "$sfile_match" ]]; then
+    # Check if target stats file exists on disk.
+    if [[ -n "$target_stats_file" && -f "$target_stats_file" ]]; then
         # Append completion timestamp to the CSV statistics file.
-        echo "completion_time, ${completion_time_str}" >> "$sfile_match"
+        echo "completion_time, ${completion_time_str}" >> "$target_stats_file"
         # Append duration formatted as hr:m:s to the CSV statistics file.
-        echo "duration, ${dur_str}" >> "$sfile_match"
+        echo "duration, ${dur_str}" >> "$target_stats_file"
     fi
 
     # Check return code.
