@@ -113,6 +113,9 @@ done
 # Ensure results directory exists.
 mkdir -p "$OUT_DIR"
 
+# Clean up any stale named pipes in /tmp from prior runs.
+rm -f /tmp/drcachesimpipe*
+
 # Function to test whether a given line number is in the requested range.
 line_is_selected() {
     # Extract candidate line index.
@@ -373,6 +376,19 @@ execute_job() {
         cmd="$(echo "$cmd" | sed -E "s|-stats_file[[:space:]]+[^[:space:]]+|-stats_file ${target_stats_file}|")"
     fi
 
+    # Assign a unique IPC pipe name for this job to prevent parallel jobs from colliding on /tmp/drcachesimpipe.
+    local unique_ipc="drcachesimpipe_${$}_${line_num}"
+    # Remove any stale pipe for this job.
+    rm -f "/tmp/${unique_ipc}"*
+    # Inject or update -ipc_name in command to isolate named pipes between concurrent jobs.
+    if [[ "$cmd" =~ -ipc_name[[:space:]]+[^[:space:]]+ ]]; then
+        # Replace existing ipc_name.
+        cmd="$(echo "$cmd" | sed -E "s|-ipc_name[[:space:]]+[^[:space:]]+|-ipc_name ${unique_ipc}|")"
+    else
+        # Inject -ipc_name right after 'drmemtrace '.
+        cmd="$(echo "$cmd" | sed -E "s|drmemtrace |drmemtrace -ipc_name ${unique_ipc} |")"
+    fi
+
     # Record start time in epoch seconds.
     local t_start
     # Capture start epoch.
@@ -382,6 +398,9 @@ execute_job() {
     eval "$cmd" > "$console_log" 2>&1
     # Capture exit code.
     local ret=$?
+
+    # Clean up unique IPC pipe after process finishes.
+    rm -f "/tmp/${unique_ipc}"*
 
     # Record end time in epoch seconds.
     local t_end
