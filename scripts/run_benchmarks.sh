@@ -32,6 +32,10 @@ SIM_REFS=""
 GUPS_MEM=""
 # Flag for dry run.
 DRY_RUN=0
+# Capture current git commit ID for reproducibility logging across all benchmark runs.
+GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")"
+# Export GIT_COMMIT_ID to environment for simulator process detection.
+export GIT_COMMIT_ID="$GIT_COMMIT"
 # Export REPO_ROOT so relative config and data files resolve deterministically.
 export REPO_ROOT="$REPO_ROOT"
 # Switch to repository root directory.

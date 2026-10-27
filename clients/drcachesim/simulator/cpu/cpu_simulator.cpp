@@ -327,6 +327,23 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
         }
 #endif
     }
+    // Fallback: Query current git commit hash dynamically if still unpopulated.
+    if (commit_str.empty() || commit_str == "unknown") {
+        FILE *git_pipe = popen("git rev-parse HEAD 2>/dev/null", "r");
+        if (git_pipe != nullptr) {
+            char gbuf[128];
+            if (fgets(gbuf, sizeof(gbuf), git_pipe) != nullptr) {
+                std::string ghash(gbuf);
+                while (!ghash.empty() && (ghash.back() == '\n' || ghash.back() == '\r' || ghash.back() == ' ')) {
+                    ghash.pop_back();
+                }
+                if (!ghash.empty()) {
+                    commit_str = ghash; // Store runtime git commit hash.
+                }
+            }
+            pclose(git_pipe);
+        }
+    }
 
     // 1. Output simulation metadata: config file used and git commit ID.
     os << "config_file, " << (knobs_.config_file.empty() ? "default" : knobs_.config_file) << "\n";
@@ -378,6 +395,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "l2_tlb_assoc, " << knobs_.l2_tlb_assoc << "\n";
     os << "l2_tlb_sector_size, " << knobs_.l2_tlb_sector_size << "\n";
     os << "dram_latency, " << knobs_.dram_latency << "\n";
+    os << "page_fault_penalty, " << knobs_.page_fault_penalty << "\n";
     os << "sim_refs, " << knobs_.sim_refs << "\n";
     os << "heartbeat_interval, " << knobs_.heartbeat_interval << "\n";
 
