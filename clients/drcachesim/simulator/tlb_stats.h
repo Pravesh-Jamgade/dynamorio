@@ -62,6 +62,9 @@ public:
         , misses_2mb_(0) // Initialize 2 MB huge-page TLB miss counter.
         , hits_1gb_(0)   // Initialize 1 GB giant-page TLB hit counter.
         , misses_1gb_(0) // Initialize 1 GB giant-page TLB miss counter.
+        , sector_tag_hits_(0)        // Initialize sector block tag hit counter.
+        , sector_tag_misses_(0)      // Initialize full sector block tag miss counter.
+        , sector_subentry_misses_(0) // Initialize sub-entry invalid miss counter.
     {
     }
 
@@ -106,6 +109,63 @@ public:
         misses_2mb_ = 0;                 // Reset 2 MB misses.
         hits_1gb_ = 0;                   // Reset 1 GB hits.
         misses_1gb_ = 0;                 // Reset 1 GB misses.
+        sector_tag_hits_ = 0;            // Reset sector tag hits.
+        sector_tag_misses_ = 0;          // Reset sector tag misses.
+        sector_subentry_misses_ = 0;     // Reset sector sub-entry misses.
+    }
+
+    /**
+     * @brief Records a sector block tag match in the set.
+     */
+    void
+    record_sector_tag_hit()
+    {
+        // Increment sector tag hit count.
+        ++sector_tag_hits_;
+    }
+
+    /**
+     * @brief Records a full sector block tag miss in the set.
+     */
+    void
+    record_sector_tag_miss()
+    {
+        // Increment sector tag miss count.
+        ++sector_tag_misses_;
+    }
+
+    /**
+     * @brief Records a sector sub-entry invalid miss (tag hit, sub-entry miss).
+     */
+    void
+    record_sector_subentry_miss()
+    {
+        // Increment sector sub-entry miss count.
+        ++sector_subentry_misses_;
+    }
+
+    // Accessor for sector block tag hits.
+    int64_t
+    get_sector_tag_hits() const
+    {
+        // Return sector tag hits.
+        return sector_tag_hits_;
+    }
+
+    // Accessor for full sector block tag misses.
+    int64_t
+    get_sector_tag_misses() const
+    {
+        // Return sector tag misses.
+        return sector_tag_misses_;
+    }
+
+    // Accessor for sector sub-entry invalid misses.
+    int64_t
+    get_sector_subentry_misses() const
+    {
+        // Return sector sub-entry misses.
+        return sector_subentry_misses_;
     }
 
     // Accessors for page-size specific TLB hits and misses.
@@ -152,6 +212,12 @@ private:
     int64_t misses_2mb_; // Count of misses on 2 MB huge pages.
     int64_t hits_1gb_;   // Count of hits on 1 GB giant pages.
     int64_t misses_1gb_; // Count of misses on 1 GB giant pages.
+    // Count of sector block tag hits in set.
+    int64_t sector_tag_hits_;
+    // Count of full sector block tag misses in set.
+    int64_t sector_tag_misses_;
+    // Count of sub-entry invalid misses (sector tag hit, sub-entry miss).
+    int64_t sector_subentry_misses_;
 };
 
 } // namespace drmemtrace

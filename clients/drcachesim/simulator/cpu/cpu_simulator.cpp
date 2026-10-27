@@ -518,6 +518,12 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     int64_t total_l2tlb_hits = 0;                                                   // Aggregate L2TLB hits.
     int64_t total_l2tlb_misses = 0;                                                 // Aggregate L2TLB misses.
     int64_t total_l2tlb_comp_misses = 0;                                            // Aggregate L2TLB compulsory misses.
+    // Aggregate count of sector block tag hits in L2 TLB.
+    int64_t total_l2tlb_sector_tag_hits = 0;
+    // Aggregate count of full sector block tag misses in L2 TLB.
+    int64_t total_l2tlb_sector_tag_misses = 0;
+    // Aggregate count of sub-entry invalid misses in L2 TLB.
+    int64_t total_l2tlb_sector_subentry_misses = 0;
 
     // Sum TLB statistics across all simulated CPU cores.
     for (unsigned int i = 0; i < knobs_.num_cores; ++i) {                           // Iterate cores.
@@ -535,6 +541,14 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             total_l2tlb_hits += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
             total_l2tlb_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
             total_l2tlb_comp_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+            // Cast stats pointer to access extended TLB sector counters.
+            tlb_stats_t *ls = (tlb_stats_t *)l2_tlbs_[i]->get_stats();
+            // Aggregate sector block tag hits.
+            total_l2tlb_sector_tag_hits += ls->get_sector_tag_hits();
+            // Aggregate full sector block tag misses.
+            total_l2tlb_sector_tag_misses += ls->get_sector_tag_misses();
+            // Aggregate sub-entry invalid misses.
+            total_l2tlb_sector_subentry_misses += ls->get_sector_subentry_misses();
         }
     }
 
@@ -567,6 +581,12 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "L2TLB compulsory misses, " << total_l2tlb_comp_misses << "\n";           // Output L2TLB compulsory misses.
     os << "L2TLB miss rate, " << l2tlb_miss_rate << "\n";                           // Output L2TLB miss rate.
     os << "L2TLB sector size, " << knobs_.l2_tlb_sector_size << "\n";               // Output L2TLB sector size.
+    // Emit sector tag hits in CSV.
+    os << "L2TLB sector tag hits, " << total_l2tlb_sector_tag_hits << "\n";
+    // Emit full sector tag misses in CSV.
+    os << "L2TLB sector tag misses, " << total_l2tlb_sector_tag_misses << "\n";
+    // Emit sub-entry invalid misses in CSV.
+    os << "L2TLB sector subentry misses, " << total_l2tlb_sector_subentry_misses << "\n";
     os << "L2TLB total entries, " << knobs_.l2_tlb_entries << "\n";                 // Output total PTE entries.
     os << "L2TLB associativity, " << knobs_.l2_tlb_assoc << "\n";                   // Output L2TLB associativity.
     unsigned int l2_sets_stat = (knobs_.l2_tlb_sector_size > 0 && knobs_.l2_tlb_assoc > 0) // Calculate set count.
@@ -675,6 +695,17 @@ cpu_simulator_t::print_results()
                   << ", Geometry=" << l2_sets_disp << "x" << knobs_.l2_tlb_assoc << ") stats:\n"; // Output geometry.
         if (i < l2_tlbs_.size() && l2_tlbs_[i] != nullptr && l2_tlbs_[i]->get_stats() != nullptr) { // Check valid L2TLB.
             l2_tlbs_[i]->get_stats()->print_stats("    ");                                 // Print L2 TLB stats.
+            // Retrieve typed TLB stats for core L2 TLB.
+            tlb_stats_t *ls = (tlb_stats_t *)l2_tlbs_[i]->get_stats();
+            // If sector mode is active, display detailed sector breakdown.
+            if (knobs_.l2_tlb_sector_size > 1) {
+                // Print sector tag hits.
+                std::cerr << "      Sector tag hits:                 " << ls->get_sector_tag_hits() << "\n";
+                // Print full sector tag misses.
+                std::cerr << "      Sector tag misses:               " << ls->get_sector_tag_misses() << "\n";
+                // Print sub-entry invalid misses.
+                std::cerr << "      Sector sub-entry misses:         " << ls->get_sector_subentry_misses() << "\n";
+            }
         }
     }
 

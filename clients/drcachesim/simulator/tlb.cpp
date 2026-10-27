@@ -125,6 +125,8 @@ tlb_t::request(const memref_t &memref_in)
                 ((tlb_stats_t *)stats_)
                     ->record_page_size_access(typed_fast->get_sub_entry_kind(fast_sub_idx),
                                               true /*hit*/);
+                // Record sector block tag hit on fast path hit.
+                ((tlb_stats_t *)stats_)->record_sector_tag_hit();
             }
             // Update replacement policy state (e.g., LFU counter or LRU age).
             access_update(last_block_idx_, last_way_);
@@ -175,6 +177,8 @@ tlb_t::request(const memref_t &memref_in)
                     ((tlb_stats_t *)stats_)
                         ->record_page_size_access(
                             typed_entry->get_sub_entry_kind(cur_sub_idx), true /*hit*/);
+                    // Record sector block tag hit on regular path hit.
+                    ((tlb_stats_t *)stats_)->record_sector_tag_hit();
                 }
                 break;
             }
@@ -195,10 +199,23 @@ tlb_t::request(const memref_t &memref_in)
                 }
             }
             if (existing_way >= 0) {
-                way = existing_way; // Reuse existing sector block slot.
+                // Reuse existing sector block slot.
+                way = existing_way;
+                // Sector tag matched in set, but sub-entry was invalid (partial miss).
+                if (stats_ != nullptr) {
+                    // Record sector block tag hit.
+                    ((tlb_stats_t *)stats_)->record_sector_tag_hit();
+                    // Record sector sub-entry invalid miss.
+                    ((tlb_stats_t *)stats_)->record_sector_subentry_miss();
+                }
             } else {
-                // Select the victim way in this set according to the replacement policy.
+                // Select victim way in this set according to replacement policy.
                 way = replace_which_way(block_idx);
+                // Sector tag was not found in set (full sector tag miss).
+                if (stats_ != nullptr) {
+                    // Record full sector tag miss.
+                    ((tlb_stats_t *)stats_)->record_sector_tag_miss();
+                }
             }
             caching_device_block_t *tlb_entry = &get_caching_device_block(block_idx, way);
             tlb_entry_t *typed_entry = (tlb_entry_t *)tlb_entry;
