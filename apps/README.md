@@ -63,25 +63,34 @@ An automated job runner is available at [`run_benchmarks.sh`](file:///media/prav
 
 ### 3.2. BTree (`apps/BTree`)
 * **Description**: Evaluates pointer-chasing memory access patterns and TLB/Cache behavior during B+ Tree traversals and insertions.
-* **Arguments**: `./apps/BTree <num_elements> <num_lookups>`
+* **Arguments**:
+  * Positional: `./apps/BTree [num_elements] [num_lookups] [payload_bytes]`
+  * Named flags: `./apps/BTree [-e elems] [-l lookups] [-p payload_bytes] [-m mem_gb]`
+  * Environment variables: `BTREE_MEM_GB`, `BTREE_ELEMENTS`, `BTREE_LOOKUPS`, `BTREE_PAYLOAD_SIZE`
 * **Modes**:
-  * **Smoke Test**: `1000` elements, `100` lookups (instantaneous).
-  * **Large Test**: `10000000` elements, `1000000` lookups (massive memory footprint, heavy TLB pressure).
+  * **Smoke Test**: `1000` elements, `100` lookups, `16`B payload (instantaneous).
+  * **Large Server Test (512 GB RAM)**:
+    * **64 GB**: `./apps/BTree 200000000 200000000 256` or `./apps/BTree -m 64` (~60 GB footprint, ~8B refs).
+    * **128 GB**: `./apps/BTree 250000000 500000000 512` or `./apps/BTree -m 128` (~143 GB footprint, ~20B refs).
+    * **256 GB**: `./apps/BTree 500000000 2000000000 512` or `./apps/BTree -m 256` (~286 GB footprint, ~80B refs).
 * **Standalone Native**:
   ```bash
   # Smoke:
   ./apps/BTree 1000 100
 
-  # Large:
-  ./apps/BTree 10000000 1000000
+  # Server 64 GB:
+  ./apps/BTree 200000000 200000000 256
+
+  # Target 128 GB RAM directly:
+  ./apps/BTree -m 128
   ```
 * **Under DynamoRIO O3 Simulator (Direct)**:
   ```bash
   # Smoke run:
   ./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -stats_file results/stats_btree_smoke.log -- ./apps/BTree 1000 100
 
-  # Large run with 10M heartbeat:
-  ./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 10000000 -stats_file results/stats_btree_large.log -- ./apps/BTree 10000000 1000000
+  # Large Server run with 50M heartbeat:
+  ./build/bin64/drrun -t drmemtrace -simulator_type cpu -cpu_config configs/o3_server.ini -heartbeat_interval 50000000 -stats_file results/stats_btree_large.log -- ./apps/BTree 200000000 200000000 256
   ```
 * **Via Job Script**:
   ```bash

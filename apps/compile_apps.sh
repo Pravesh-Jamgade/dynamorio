@@ -150,9 +150,9 @@ if [ \"\$__APP_NAME__\" == \"all\" ] || [ \"\$__APP_NAME__\" == \"btree\" ]; the
 
     if [ \"\$__TEST_TYPE__\" == \"large\" ]; then
         echo \"Running BTree (Large Test)...\"
-        # Large test: 10,000,000 elements, 1,000,000 lookups.
-        # Stresses the TLB and forces Page Table Walks.
-        ./BTree 10000000 1000000
+        # Large test: 200,000,000 elements, 200,000,000 lookups, 256B payload (~60GB memory footprint).
+        # Stresses the TLB and forces Page Table Walks across large server memory.
+        ./BTree 200000000 200000000 256
     fi
 fi
 
@@ -207,6 +207,8 @@ p = subprocess.Popen(
      '--exclude=hashjoin/.git', 
      '--exclude=hashjoin/tpch-dbgen-master.zip', 
      '--exclude=xsbench/src/*.o', 
+     # Exclude large TPC-H dataset tables from embedded payload script.
+     '--exclude=hashjoin/tpch-dbgen-master/*.tbl',
      '--exclude=hashjoin/tpch-dbgen-master/*.o', 
      '.'],
     stdout=subprocess.PIPE,

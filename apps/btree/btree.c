@@ -59,20 +59,18 @@
 
 
 #ifdef _OPENMP
-///< the number of elements in the tree
-//#define NELEMENTS (8UL << 30)
-#define NELEMENTS   (1400UL << 20)
-///< the number of lookups
-#define NLOOKUP 2000000000UL
+// Default number of elements in tree for OpenMP multi-threaded execution (500M elements).
+#define NELEMENTS   (500000000ULL)
+// Default number of lookups for OpenMP multi-threaded execution (2 Billion lookups).
+#define NLOOKUP     (2000000000ULL)
 #else
-///< the number of elements in the tree
-//#define NELEMENTS (3400UL << 20)
-
-#define NELEMENTS (100UL << 20)
-#define NLOOKUP 10000000
-///< the number of lookups
-//#define NLOOKUP 50000000
+// Default number of elements in tree scaled for server execution (200M elements).
+#define NELEMENTS   (200000000ULL)
+// Default number of lookups scaled for server execution (200M lookups ~8B references).
+#define NLOOKUP     (200000000ULL)
 #endif
+// Default payload size in bytes per element (256 bytes per element for ~60GB memory footprint).
+#define DEFAULT_PAYLOAD_SIZE (256ULL)
 
 
 
@@ -86,6 +84,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+// Standard integer format specifiers for 64-bit printing.
+#include <inttypes.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <string.h>
@@ -643,7 +643,8 @@ uint64_t cut(uint64_t length) {
 // INSERTION
 
 
-#define NODE_SLAB_GROW (1<<18)
+// Slabs grow in 2MB chunks matching ALIGNMET huge page size.
+#define NODE_SLAB_GROW (1 << 21)
 
 struct node *free_nodes = NULL;
 
@@ -669,7 +670,8 @@ void free_node(node *n)
 }
 
 
-#define RECORD_SLAB_GROW (1<<18)
+// Record slabs grow in 2MB chunks matching ALIGNMET huge page size.
+#define RECORD_SLAB_GROW (1 << 21)
 
 struct record *free_recs = NULL;
 
@@ -1518,6 +1520,16 @@ uint64_t redisLrand48() {
 	return (((uint64_t)x[2] << (N - 1)) + (x[1] >> 1));
 }
 
+// Generate full 62-bit random integer to uniformly cover large element counts.
+uint64_t redisLrand64(void) {
+	// Generate high 31 bits from first random word.
+	uint64_t hi = redisLrand48();
+	// Generate low bits from second random word.
+	uint64_t lo = redisLrand48();
+	// Combine both halves into a 62-bit pseudo-random value.
+	return (hi << 31) ^ lo;
+}
+
 void redisSrand48(int32_t seedval) {
 	SEED(X0, LOW(seedval), HIGH(seedval));
 }
@@ -1537,83 +1549,280 @@ static void next(void) {
 	x[0] = LOW(p[0]);
 }
 
-//int real_main(int argc, char ** argv) {
+// Application entry point for B-Tree benchmark execution.
 int main(int argc, char ** argv) {
-	node * root;
-	int numelems = NELEMENTS;
-	int lookups = NLOOKUP;
+	// Root pointer for the B-Tree index structure.
+	node * root = NULL;
+	// Number of unique keys/elements to generate and insert into tree.
+	size_t numelems = NELEMENTS;
+	// Number of random search lookups to perform across the tree.
+	size_t lookups = NLOOKUP;
+	// Payload memory allocation size in bytes per element.
+	size_t payload_size = DEFAULT_PAYLOAD_SIZE;
+	// Target total memory allocation in gigabytes (0 indicates default).
+	size_t target_mem_gb = 0;
 
-	if(argc > 1) {
-		numelems = atoi(argv[1]);
-		if(numelems <= 0)
-			numelems = NELEMENTS;
-		//else 
-		//	printf("WARNING: elements should be divisible by 1000\n");
+	// Check environment variable for elements override.
+	const char *env_elems = getenv("BTREE_ELEMENTS");
+	// Validate presence of non-empty elements environment variable.
+	if (env_elems != NULL && env_elems[0] != '\0') {
+		// Parse element count from environment variable.
+		numelems = strtoull(env_elems, NULL, 0);
+	}
+	// Check environment variable for lookups override.
+	const char *env_lookups = getenv("BTREE_LOOKUPS");
+	// Validate presence of non-empty lookups environment variable.
+	if (env_lookups != NULL && env_lookups[0] != '\0') {
+		// Parse lookup count from environment variable.
+		lookups = strtoull(env_lookups, NULL, 0);
+	}
+	// Check environment variable for payload size override.
+	const char *env_payload = getenv("BTREE_PAYLOAD_SIZE");
+	// Validate presence of non-empty payload environment variable.
+	if (env_payload != NULL && env_payload[0] != '\0') {
+		// Parse payload size in bytes from environment variable.
+		payload_size = strtoull(env_payload, NULL, 0);
+	}
+	// Check environment variable for memory allocation in GB.
+	const char *env_mem = getenv("BTREE_MEM_GB");
+	// Validate presence of non-empty memory size environment variable.
+	if (env_mem != NULL && env_mem[0] != '\0') {
+		// Parse memory target in GB from environment variable.
+		target_mem_gb = strtoull(env_mem, NULL, 0);
 	}
 
-	if(argc > 2) {
-		lookups = atoi(argv[2]);
-		if(lookups <= 0)
-			lookups = NLOOKUP;
+	// Index for iterating over command-line arguments.
+	int arg_idx = 1;
+	// Flag indicating if arguments are positional.
+	bool is_positional = true;
+	// Loop over all provided command-line arguments.
+	while (arg_idx < argc) {
+		// Check for help request.
+		if (strcmp(argv[arg_idx], "-h") == 0 || strcmp(argv[arg_idx], "--help") == 0) {
+			// Print command usage format.
+			printf("Usage: %s [num_elements] [num_lookups] [payload_bytes]\n", argv[0]);
+			// Print named option usage format.
+			printf("   or: %s [-e elems] [-l lookups] [-p payload_bytes] [-m mem_gb]\n", argv[0]);
+			// Return success after printing help.
+			return EXIT_SUCCESS;
+		// Check for elements flag.
+		} else if (strcmp(argv[arg_idx], "-e") == 0 || strcmp(argv[arg_idx], "--elements") == 0) {
+			// Ensure argument value is present.
+			if (arg_idx + 1 < argc) {
+				// Parse element count from next argument.
+				numelems = strtoull(argv[++arg_idx], NULL, 0);
+				// Mark as non-positional syntax.
+				is_positional = false;
+			}
+		// Check for lookups flag.
+		} else if (strcmp(argv[arg_idx], "-l") == 0 || strcmp(argv[arg_idx], "--lookups") == 0) {
+			// Ensure argument value is present.
+			if (arg_idx + 1 < argc) {
+				// Parse lookup count from next argument.
+				lookups = strtoull(argv[++arg_idx], NULL, 0);
+				// Mark as non-positional syntax.
+				is_positional = false;
+			}
+		// Check for payload flag.
+		} else if (strcmp(argv[arg_idx], "-p") == 0 || strcmp(argv[arg_idx], "--payload") == 0) {
+			// Ensure argument value is present.
+			if (arg_idx + 1 < argc) {
+				// Parse payload size in bytes from next argument.
+				payload_size = strtoull(argv[++arg_idx], NULL, 0);
+				// Mark as non-positional syntax.
+				is_positional = false;
+			}
+		// Check for memory target in GB flag.
+		} else if (strcmp(argv[arg_idx], "-m") == 0 || strcmp(argv[arg_idx], "--mem") == 0 ||
+				   strcmp(argv[arg_idx], "--mem-gb") == 0) {
+			// Ensure argument value is present.
+			if (arg_idx + 1 < argc) {
+				// Parse memory target in GB from next argument.
+				target_mem_gb = strtoull(argv[++arg_idx], NULL, 0);
+				// Mark as non-positional syntax.
+				is_positional = false;
+			}
+		// Check for unrecognized option flag.
+		} else if (argv[arg_idx][0] == '-') {
+			// Print error for unknown flag.
+			fprintf(stderr, "Unknown option: %s\n", argv[arg_idx]);
+			// Exit with failure code.
+			return EXIT_FAILURE;
+		// Handle positional argument.
+		} else {
+			// Verify positional mode is active.
+			if (is_positional) {
+				// First positional argument is number of elements.
+				if (arg_idx == 1) {
+					// Parse element count.
+					numelems = strtoull(argv[arg_idx], NULL, 0);
+				// Second positional argument is number of lookups.
+				} else if (arg_idx == 2) {
+					// Parse lookup count.
+					lookups = strtoull(argv[arg_idx], NULL, 0);
+				// Third positional argument is payload size in bytes.
+				} else if (arg_idx == 3) {
+					// Parse payload size in bytes.
+					payload_size = strtoull(argv[arg_idx], NULL, 0);
+				}
+			}
+		}
+		// Advance to next argument.
+		arg_idx++;
 	}
 
-	printf("BTree Elements: %zu\n", (size_t)numelems);
-	printf("BTree #Lookups: %zu\n", (size_t)lookups);
-	root = NULL;
-	verbose_output = false;
+	// Calculate elements and payload size when explicit memory target in GB is provided.
+	if (target_mem_gb > 0) {
+		// Convert target gigabytes to raw byte count.
+		size_t target_bytes = target_mem_gb * (1024ULL * 1024ULL * 1024ULL);
+		// Ensure minimum payload size of 64 bytes for large memory allocation.
+		if (payload_size < 64) {
+			// Default payload size to 256 bytes.
+			payload_size = 256;
+		}
+		// Approximate memory footprint per element including tree nodes and records (~46 bytes).
+		size_t approx_bytes = payload_size + 46;
+		// Compute element count to saturate target memory.
+		numelems = target_bytes / approx_bytes;
+	}
 
+	// Fallback to default elements if 0 was given.
+	if (numelems == 0) {
+		// Set default element count.
+		numelems = NELEMENTS;
+	}
+	// Ensure element count is even for dual insertion loop.
+	if (numelems % 2 != 0) {
+		// Increment by 1 to make count even.
+		numelems++;
+	}
+	// Fallback to default lookups if 0 was given.
+	if (lookups == 0) {
+		// Set default lookup count.
+		lookups = NLOOKUP;
+	}
+	// Enforce minimum payload size of 16 bytes for two 64-bit integer payloads.
+	if (payload_size < 16) {
+		// Set minimum payload size to 16 bytes.
+		payload_size = 16;
+	}
+	// Align payload size to 16-byte boundary.
+	if (payload_size % 16 != 0) {
+		// Round up payload size to nearest multiple of 16.
+		payload_size = ((payload_size + 15) / 16) * 16;
+	}
+
+	// Number of elements in each half of the payload array.
+	size_t half_elems = numelems / 2;
+	// Total memory to allocate for forward elements payload.
+	size_t payload_bytes = half_elems * payload_size;
+	// Allocate aligned memory for first half of element payloads.
+	uint8_t *elms = (uint8_t *)allocate(payload_bytes);
+	// Allocate aligned memory for second half of element payloads.
+	uint8_t *elms2 = (uint8_t *)allocate(payload_bytes);
+
+	// Display tree elements count.
+	printf("BTree Elements: %zu\n", numelems);
+	// Display number of lookups.
+	printf("BTree #Lookups: %zu\n", lookups);
+	// Set B-Tree fanout order.
 	order = 16;
+	// Display tree fanout.
+	printf("BTree Fanout: %zu\n", order);
+	// Display payload size per element in bytes.
+	printf("Payload per element: %zu bytes\n", payload_size);
+	// Display initial payload allocator statistics.
+	printf("Initial Payload Allocation: %zu bytes (%.2f GB)\n", allocator_stat, (double)allocator_stat / (1024.0 * 1024.0 * 1024.0));
 
+	// Initialize random number generator seed.
 	redisSrand48(0xcafebabe);
 
-	struct element {
+	// Populate and insert all elements into the B-Tree index.
+	for (size_t i = 0; i < numelems; i += 2) {
+		// Compute pointer to forward element payload.
+		uint8_t *p1 = elms + (i / 2) * payload_size;
+		// Compute pointer to reverse element payload.
+		uint8_t *p2 = elms2 + (i / 2) * payload_size;
+		// Initialize primary payload field of forward element.
+		*(uint64_t *)p1 = i;
+		// Initialize secondary payload field of forward element.
+		*(uint64_t *)(p1 + 8) = i ^ 0x5555555555555555ULL;
+		// Initialize primary payload field of reverse element.
+		*(uint64_t *)p2 = numelems - i - 1;
+		// Initialize secondary payload field of reverse element.
+		*(uint64_t *)(p2 + 8) = (numelems - i - 1) ^ 0xAAAAAAAAAAAAAAAAULL;
+
+		// Insert even key into tree with pointer to p1.
+		root = insert(root, i, (uint64_t)p1);
+		// Insert odd key into tree with pointer to p2 (using numelems instead of old bug).
+		root = insert(root, numelems - i - 1, (uint64_t)p2);
+	}
+
+	// Print notification that tree construction completed.
+	printf("Tree built successfully with %zu elements.\n", numelems);
+	// Print total memory allocated across payload arrays and B-Tree nodes.
+	printf("Total Allocated Memory: %zu bytes (%.2f GB)\n", allocator_stat, (double)allocator_stat / (1024.0 * 1024.0 * 1024.0));
+
+	// Accumulator sum to ensure lookups are not optimized away.
+	uint64_t sum = 0;
+
+	// Structure definition for reading element payloads.
+	struct element_view {
+		// First 64-bit payload word.
 		uint64_t payload;
+		// Second 64-bit payload word.
 		uint64_t payload2;
 	};
 
-	struct element *elms = allocate((numelems / 2) * sizeof(struct element));
-	struct element *elms2 = allocate((numelems / 2) * sizeof(struct element));
-
-	printf("Btree Fanout: %zu\n", order);
-	printf("Allocator: %zu bytes\n", allocator_stat);
-
-	for (size_t i = 0; i < numelems; i += 2) {
-
-		root = insert(root, i, (uint64_t)&elms[i/2]);
-		root = insert(root, NELEMENTS - i - 1, (uint64_t)&elms2[i/2]);
-	}
-
-	//usleep(250);
-	uint64_t sum = 0;
-
-	//let's reduce simulaiton time
-	//struct timeval start, end;
-	//gettimeofday(&start, NULL);
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
-	/* Loop for the user-specified number of lookups (or NLOOKUP default) */
-	for (size_t i = 0; i < (size_t)lookups; i++) {
-		size_t rdn = redisLrand48();
+	// Execute user-specified number of random search lookups.
+	for (size_t i = 0; i < lookups; i++) {
+		// Generate 62-bit random number.
+		size_t rdn = redisLrand64();
+		// Find first random key in tree.
 		record * r = find(root, rdn % numelems, false, NULL);
+		// Validate lookup record existence.
 		if (r) {
-			struct element *e = (struct element *)r->value;
+			// Cast record value pointer to element structure.
+			struct element_view *e = (struct element_view *)r->value;
+			// Check element pointer validity.
 			if (e) {
+				// Accumulate primary payload.
 				sum += e->payload;
+				// If payload is large, also access data near end of element to touch cache line.
+				if (payload_size >= 64) {
+					// Add tail payload value to accumulator.
+					sum += *(uint64_t *)((uint8_t *)e + payload_size - 8);
+				}
 			}
 		}
 
+		// Find second derived key in tree.
 		r = find(root, ((rdn + 1) << 2) % numelems, false, NULL);
+		// Validate lookup record existence.
 		if (r) {
-			struct element *e = (struct element *)r->value;
+			// Cast record value pointer to element structure.
+			struct element_view *e = (struct element_view *)r->value;
+			// Check element pointer validity.
 			if (e) {
+				// Accumulate primary payload.
 				sum += e->payload;
+				// If payload is large, also access data near end of element to touch cache line.
+				if (payload_size >= 64) {
+					// Add tail payload value to accumulator.
+					sum += *(uint64_t *)((uint8_t *)e + payload_size - 8);
+				}
 			}
 		}
 	}
-	//gettimeofday(&end, NULL);
-	//printf("got %zu matches in %zu seconds\n", sum, end.tv_sec - start.tv_sec);
+
+	// Guard against dead-code elimination of lookups.
+	if (sum == 0xdeadbeefcafebabeULL) {
+		// Print accumulator sum checksum.
+		printf("Checksum: %" PRIu64 "\n", sum);
+	}
+	// Print benchmark completion status.
 	printf("Finished Execution\n");
 
-    return EXIT_SUCCESS;
+	// Return success exit code.
+	return EXIT_SUCCESS;
 }

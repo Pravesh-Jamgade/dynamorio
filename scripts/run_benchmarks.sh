@@ -74,7 +74,7 @@ list_benchmarks() {
     # Smoke command for BTree.
     echo "     Smoke: ./apps/BTree 1000 100"
     # Large command for BTree.
-    echo "     Large: ./apps/BTree 10000000 1000000"
+    echo "     Large: ./apps/BTree 200000000 200000000 256"
     # List GUPS.
     echo "  3. gups (Giga Updates Per Second memory stressor):"
     # Smoke command for GUPS.
@@ -326,8 +326,8 @@ case "$APP" in
             # Run smoke test for BTree (1,000 elements, 100 lookups).
             run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "1000" "100"
         else
-            # Run large test for BTree (10,000,000 elements, 1,000,000 lookups).
-            run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "10000000" "1000000"
+            # Run large test for BTree (200,000,000 elements, 200,000,000 lookups, 256B payload).
+            run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "200000000" "200000000" "256"
         fi
         ;;
     # Handle gups.
@@ -391,8 +391,8 @@ case "$APP" in
             # Smoke test for BTree.
             run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "1000" "100"
         else
-            # Large test for BTree.
-            run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "10000000" "1000000"
+            # Large test for BTree (200,000,000 elements, 200,000,000 lookups, 256B payload).
+            run_single_benchmark "btree" "${REPO_ROOT}/apps/BTree" "200000000" "200000000" "256"
         fi
 
         # 3. Run GUPS.
