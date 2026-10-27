@@ -123,13 +123,19 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         // Initialize L2 TLB and attach the hardware Page Table Walker.
         l2_tlbs_[i]->init(l2_assoc, static_cast<int>(l2_block_size), l2_num_blocks, nullptr,
                           new tlb_stats_t(static_cast<int>(knobs_.page_size)));
+        // Set L2 TLB capacity in entries for capacity miss classification.
+        l2_tlbs_[i]->get_stats()->set_device_capacity(l2_total_entries);
         l2_tlbs_[i]->set_page_table_walker(walkers_[i].get());
 
         // Initialize L1 ITLB and L1 DTLB, parenting them to L2 TLB.
         itlbs_[i]->init(32, static_cast<int>(knobs_.page_size), 32, l2_tlbs_[i].get(),
                         new tlb_stats_t(static_cast<int>(knobs_.page_size)));
+        // Set L1 ITLB capacity in entries.
+        itlbs_[i]->get_stats()->set_device_capacity(32);
         dtlbs_[i]->init(32, static_cast<int>(knobs_.page_size), 32, l2_tlbs_[i].get(),
                         new tlb_stats_t(static_cast<int>(knobs_.page_size)));
+        // Set L1 DTLB capacity in entries.
+        dtlbs_[i]->get_stats()->set_device_capacity(32);
 
         // Configure Out-of-Order CPU core pipeline parameters.
         cpu_core_knobs_t core_knobs;
@@ -411,9 +417,13 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             int64_t hits = l1i_stats->get_metric(metric_name_t::HITS);              // L1I hits.
             int64_t misses = l1i_stats->get_metric(metric_name_t::MISSES);          // L1I misses.
             int64_t comp_misses = l1i_stats->get_metric(metric_name_t::COMPULSORY_MISSES); // Compulsory.
+            int64_t cold_misses = l1i_stats->get_metric(metric_name_t::COLD_MISSES);       // Cold misses.
+            int64_t cap_misses = l1i_stats->get_metric(metric_name_t::CAPACITY_MISSES);    // Capacity misses.
             double miss_rate = (hits + misses > 0) ? (static_cast<double>(misses) / (hits + misses)) : 0.0; // Rate.
             os << "L1I hits, " << hits << "\n";                                     // Output L1I hits.
             os << "L1I misses, " << misses << "\n";                                 // Output L1I misses.
+            os << "L1I cold misses, " << cold_misses << "\n";                       // Output L1I cold misses.
+            os << "L1I capacity misses, " << cap_misses << "\n";                   // Output L1I capacity misses.
             os << "L1I compulsory misses, " << comp_misses << "\n";                 // Output compulsory.
             os << "L1I miss rate, " << miss_rate << "\n";                           // Output miss rate.
         }
@@ -434,9 +444,13 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             int64_t hits = l1d_stats->get_metric(metric_name_t::HITS);              // L1D hits.
             int64_t misses = l1d_stats->get_metric(metric_name_t::MISSES);          // L1D misses.
             int64_t comp_misses = l1d_stats->get_metric(metric_name_t::COMPULSORY_MISSES); // Compulsory.
+            int64_t cold_misses = l1d_stats->get_metric(metric_name_t::COLD_MISSES);       // Cold misses.
+            int64_t cap_misses = l1d_stats->get_metric(metric_name_t::CAPACITY_MISSES);    // Capacity misses.
             double miss_rate = (hits + misses > 0) ? (static_cast<double>(misses) / (hits + misses)) : 0.0; // Rate.
             os << "L1D hits, " << hits << "\n";                                     // Output L1D hits.
             os << "L1D misses, " << misses << "\n";                                 // Output L1D misses.
+            os << "L1D cold misses, " << cold_misses << "\n";                       // Output L1D cold misses.
+            os << "L1D capacity misses, " << cap_misses << "\n";                   // Output L1D capacity misses.
             os << "L1D compulsory misses, " << comp_misses << "\n";                 // Output compulsory.
             os << "L1D miss rate, " << miss_rate << "\n";                           // Output miss rate.
         }
@@ -462,6 +476,8 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             int64_t hits = l2_stats->get_metric(metric_name_t::HITS);                // L2 hits.
             int64_t misses = l2_stats->get_metric(metric_name_t::MISSES);            // L2 misses.
             int64_t comp_misses = l2_stats->get_metric(metric_name_t::COMPULSORY_MISSES); // Compulsory.
+            int64_t cold_misses = l2_stats->get_metric(metric_name_t::COLD_MISSES);       // Cold misses.
+            int64_t cap_misses = l2_stats->get_metric(metric_name_t::CAPACITY_MISSES);    // Capacity misses.
             int64_t child_hits = l2_stats->get_metric(metric_name_t::CHILD_HITS);    // Child hits.
             double local_miss_rate = (hits + misses > 0) ? (static_cast<double>(misses) / (hits + misses)) : 0.0;
             double total_miss_rate = (child_hits + hits + misses > 0)
@@ -469,6 +485,8 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
                 : 0.0;
             os << "L2 hits, " << hits << "\n";                                       // Output L2 hits.
             os << "L2 misses, " << misses << "\n";                                   // Output L2 misses.
+            os << "L2 cold misses, " << cold_misses << "\n";                         // Output L2 cold misses.
+            os << "L2 capacity misses, " << cap_misses << "\n";                     // Output L2 capacity misses.
             os << "L2 compulsory misses, " << comp_misses << "\n";                   // Output compulsory.
             os << "L2 local miss rate, " << local_miss_rate << "\n";                 // Output local miss rate.
             os << "L2 child hits, " << child_hits << "\n";                           // Output child hits.
@@ -487,6 +505,8 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             int64_t hits = l3_stats->get_metric(metric_name_t::HITS);                // LLC hits.
             int64_t misses = l3_stats->get_metric(metric_name_t::MISSES);            // LLC misses.
             int64_t comp_misses = l3_stats->get_metric(metric_name_t::COMPULSORY_MISSES); // Compulsory.
+            int64_t cold_misses = l3_stats->get_metric(metric_name_t::COLD_MISSES);       // Cold misses.
+            int64_t cap_misses = l3_stats->get_metric(metric_name_t::CAPACITY_MISSES);    // Capacity misses.
             int64_t child_hits = l3_stats->get_metric(metric_name_t::CHILD_HITS);    // Child hits.
             double local_miss_rate = (hits + misses > 0) ? (static_cast<double>(misses) / (hits + misses)) : 0.0;
             double total_miss_rate = (child_hits + hits + misses > 0)
@@ -494,10 +514,27 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
                 : 0.0;
             os << "LLC hits, " << hits << "\n";                                      // Output LLC hits.
             os << "LLC misses, " << misses << "\n";                                  // Output LLC misses.
+            os << "LLC cold misses, " << cold_misses << "\n";                         // Output LLC cold misses.
+            os << "LLC capacity misses, " << cap_misses << "\n";                     // Output LLC capacity misses.
             os << "LLC compulsory misses, " << comp_misses << "\n";                  // Output compulsory.
             os << "LLC local miss rate, " << local_miss_rate << "\n";                // Output local miss rate.
             os << "LLC child hits, " << child_hits << "\n";                          // Output child hits.
             os << "LLC total miss rate, " << total_miss_rate << "\n";                // Output total miss rate.
+
+            // LLC Reuse Distance Histogram (Power of 2):
+            // Row 1: Header with power-of-2 labels.
+            os << "LLC, labels of histogram of power of 2";
+            for (const auto &lbl : caching_device_stats_t::get_reuse_histogram_labels()) {
+                os << ", " << lbl; // Print each power-of-2 bin label.
+            }
+            os << "\n";
+            // Row 2: Event counts corresponding to each power-of-2 bin.
+            os << "LLC, event countof histogram power of 2";
+            const auto &hist = l3_stats->get_reuse_histogram();
+            for (int64_t cnt : hist) {
+                os << ", " << cnt; // Print event count for bin.
+            }
+            os << "\n";
         }
         if (cache_hierarchy_->get_l3_mshr() != nullptr) {
             const auto &mshr_s = cache_hierarchy_->get_l3_mshr()->get_stats();       // L3 MSHR stats.
@@ -512,12 +549,18 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     int64_t total_itlb_hits = 0;                                                    // Aggregate ITLB hits.
     int64_t total_itlb_misses = 0;                                                  // Aggregate ITLB misses.
     int64_t total_itlb_comp_misses = 0;                                             // Aggregate ITLB compulsory misses.
+    int64_t total_itlb_cold_misses = 0;                                             // Aggregate ITLB cold misses.
+    int64_t total_itlb_cap_misses = 0;                                              // Aggregate ITLB capacity misses.
     int64_t total_dtlb_hits = 0;                                                    // Aggregate DTLB hits.
     int64_t total_dtlb_misses = 0;                                                  // Aggregate DTLB misses.
     int64_t total_dtlb_comp_misses = 0;                                             // Aggregate DTLB compulsory misses.
+    int64_t total_dtlb_cold_misses = 0;                                             // Aggregate DTLB cold misses.
+    int64_t total_dtlb_cap_misses = 0;                                              // Aggregate DTLB capacity misses.
     int64_t total_l2tlb_hits = 0;                                                   // Aggregate L2TLB hits.
     int64_t total_l2tlb_misses = 0;                                                 // Aggregate L2TLB misses.
     int64_t total_l2tlb_comp_misses = 0;                                            // Aggregate L2TLB compulsory misses.
+    int64_t total_l2tlb_cold_misses = 0;                                            // Aggregate L2TLB cold misses.
+    int64_t total_l2tlb_cap_misses = 0;                                             // Aggregate L2TLB capacity misses.
     // Aggregate count of sector block tag hits in L2 TLB.
     int64_t total_l2tlb_sector_tag_hits = 0;
     // Aggregate count of full sector block tag misses in L2 TLB.
@@ -531,16 +574,22 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
             total_itlb_hits += itlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
             total_itlb_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
             total_itlb_comp_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+            total_itlb_cold_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::COLD_MISSES); // Sum cold.
+            total_itlb_cap_misses += itlbs_[i]->get_stats()->get_metric(metric_name_t::CAPACITY_MISSES); // Sum capacity.
         }
         if (i < dtlbs_.size() && dtlbs_[i] != nullptr && dtlbs_[i]->get_stats() != nullptr) { // Check DTLB.
             total_dtlb_hits += dtlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
             total_dtlb_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
             total_dtlb_comp_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+            total_dtlb_cold_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::COLD_MISSES); // Sum cold.
+            total_dtlb_cap_misses += dtlbs_[i]->get_stats()->get_metric(metric_name_t::CAPACITY_MISSES); // Sum capacity.
         }
         if (i < l2_tlbs_.size() && l2_tlbs_[i] != nullptr && l2_tlbs_[i]->get_stats() != nullptr) { // Check L2TLB.
             total_l2tlb_hits += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::HITS); // Sum hits.
             total_l2tlb_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::MISSES); // Sum misses.
             total_l2tlb_comp_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::COMPULSORY_MISSES); // Sum compulsory.
+            total_l2tlb_cold_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::COLD_MISSES); // Sum cold.
+            total_l2tlb_cap_misses += l2_tlbs_[i]->get_stats()->get_metric(metric_name_t::CAPACITY_MISSES); // Sum capacity.
             // Cast stats pointer to access extended TLB sector counters.
             tlb_stats_t *ls = (tlb_stats_t *)l2_tlbs_[i]->get_stats();
             // Aggregate sector block tag hits.
@@ -566,18 +615,24 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     // Emit ITLB CSV statistics.
     os << "ITLB hits, " << total_itlb_hits << "\n";                                 // Output ITLB hits.
     os << "ITLB misses, " << total_itlb_misses << "\n";                             // Output ITLB misses.
+    os << "ITLB cold misses, " << total_itlb_cold_misses << "\n";                   // Output ITLB cold misses.
+    os << "ITLB capacity misses, " << total_itlb_cap_misses << "\n";               // Output ITLB capacity misses.
     os << "ITLB compulsory misses, " << total_itlb_comp_misses << "\n";             // Output ITLB compulsory misses.
     os << "ITLB miss rate, " << itlb_miss_rate << "\n";                             // Output ITLB miss rate.
 
     // Emit DTLB CSV statistics.
     os << "DTLB hits, " << total_dtlb_hits << "\n";                                 // Output DTLB hits.
     os << "DTLB misses, " << total_dtlb_misses << "\n";                             // Output DTLB misses.
+    os << "DTLB cold misses, " << total_dtlb_cold_misses << "\n";                   // Output DTLB cold misses.
+    os << "DTLB capacity misses, " << total_dtlb_cap_misses << "\n";               // Output DTLB capacity misses.
     os << "DTLB compulsory misses, " << total_dtlb_comp_misses << "\n";             // Output DTLB compulsory misses.
     os << "DTLB miss rate, " << dtlb_miss_rate << "\n";                             // Output DTLB miss rate.
 
     // Emit unified L2 TLB CSV statistics.
     os << "L2TLB hits, " << total_l2tlb_hits << "\n";                               // Output L2TLB hits.
     os << "L2TLB misses, " << total_l2tlb_misses << "\n";                           // Output L2TLB misses.
+    os << "L2TLB cold misses, " << total_l2tlb_cold_misses << "\n";                 // Output L2TLB cold misses.
+    os << "L2TLB capacity misses, " << total_l2tlb_cap_misses << "\n";             // Output L2TLB capacity misses.
     os << "L2TLB compulsory misses, " << total_l2tlb_comp_misses << "\n";           // Output L2TLB compulsory misses.
     os << "L2TLB miss rate, " << l2tlb_miss_rate << "\n";                           // Output L2TLB miss rate.
     os << "L2TLB sector size, " << knobs_.l2_tlb_sector_size << "\n";               // Output L2TLB sector size.

@@ -47,6 +47,11 @@ three_level_cache_t::three_level_cache_t(const three_level_cache_knobs_t &knobs)
 {
     // 1. Allocate and initialize the shared L3 / Last-Level Cache (LLC).
     l3_stats_.reset(new cache_stats_t(static_cast<int>(knobs_.line_size)));
+    // Configure LLC capacity in blocks (total bytes / line size bytes).
+    l3_stats_->set_device_capacity(knobs_.l3_size / knobs_.line_size);
+    // Enable power-of-2 reuse distance histogram tracking on Shared LLC.
+    l3_stats_->enable_reuse_distance_histogram(true);
+    // Instantiate shared L3 / LLC caching device.
     l3_cache_.reset(new cache_lru_t("Shared_LLC"));
     // Initialize L3 with configured associativity, line size, total capacity, and stats.
     l3_cache_->init(knobs_.l3_assoc, static_cast<int>(knobs_.line_size),
@@ -89,6 +94,8 @@ three_level_cache_t::three_level_cache_t(const three_level_cache_knobs_t &knobs)
 
         // Allocate L2 cache and stats for core i.
         l2_stats_[i].reset(new cache_stats_t(static_cast<int>(knobs_.line_size)));
+        // Set L2 capacity in blocks for capacity miss classification.
+        l2_stats_[i]->set_device_capacity(knobs_.l2_size / knobs_.line_size);
         l2_caches_[i].reset(new cache_lru_t(l2_name));
         // L2's parent is the shared L3 / Last-Level Cache.
         l2_caches_[i]->init(knobs_.l2_assoc, static_cast<int>(knobs_.line_size),
@@ -103,6 +110,8 @@ three_level_cache_t::three_level_cache_t(const three_level_cache_knobs_t &knobs)
 
         // Allocate L1D cache and stats for core i.
         l1d_stats_[i].reset(new cache_stats_t(static_cast<int>(knobs_.line_size)));
+        // Set L1D capacity in blocks for capacity miss classification.
+        l1d_stats_[i]->set_device_capacity(knobs_.l1d_size / knobs_.line_size);
         l1d_caches_[i].reset(new cache_lru_t(l1d_name));
         // L1D's parent is core i's private L2 cache.
         l1d_caches_[i]->init(knobs_.l1d_assoc, static_cast<int>(knobs_.line_size),
@@ -117,6 +126,8 @@ three_level_cache_t::three_level_cache_t(const three_level_cache_knobs_t &knobs)
 
         // Allocate L1I cache and stats for core i.
         l1i_stats_[i].reset(new cache_stats_t(static_cast<int>(knobs_.line_size)));
+        // Set L1I capacity in blocks for capacity miss classification.
+        l1i_stats_[i]->set_device_capacity(knobs_.l1i_size / knobs_.line_size);
         l1i_caches_[i].reset(new cache_lru_t(l1i_name));
         // L1I's parent is also core i's private unified L2 cache!
         l1i_caches_[i]->init(knobs_.l1i_assoc, static_cast<int>(knobs_.line_size),

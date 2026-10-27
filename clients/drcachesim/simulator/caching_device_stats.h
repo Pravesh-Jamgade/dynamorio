@@ -53,6 +53,7 @@
 #include "trace_entry.h"
 #include "utils.h"
 #include "memref.h"
+#include "reuse_distance_tracker.h" // Exact LRU stack and reuse distance tracking.
 
 namespace dynamorio {
 namespace drmemtrace {
@@ -69,6 +70,9 @@ enum class metric_name_t {
     HITS_AT_RESET,
     MISSES_AT_RESET,
     COMPULSORY_MISSES,
+    COLD_MISSES,
+    CAPACITY_MISSES,
+    CONFLICT_MISSES,
     CHILD_HITS,
     CHILD_HITS_AT_RESET,
     INCLUSIVE_INVALIDATES,
@@ -225,6 +229,67 @@ public:
         caching_device_ = caching_device;
     }
 
+    // Returns cold misses (first access to block/page; identical to compulsory).
+    int64_t
+    get_cold_misses() const
+    {
+        return num_cold_misses_; // Return cold misses.
+    }
+
+    // Returns capacity misses (re-reference misses where reuse distance >= capacity).
+    int64_t
+    get_capacity_misses() const
+    {
+        return num_capacity_misses_; // Return capacity misses.
+    }
+
+    // Returns conflict misses (re-reference misses where reuse distance < capacity).
+    int64_t
+    get_conflict_misses() const
+    {
+        return num_conflict_misses_; // Return conflict misses.
+    }
+
+    // Configures the explicit capacity in blocks or entries for this caching device.
+    void
+    set_device_capacity(int64_t num_blocks)
+    {
+        device_capacity_in_blocks_ = num_blocks; // Store configured capacity.
+    }
+
+    // Resolves device capacity in blocks/entries either from explicit setting or device query.
+    int64_t
+    get_capacity_in_blocks() const;
+
+    // Enables or disables tracking of reuse distance power-of-2 histogram.
+    void
+    enable_reuse_distance_histogram(bool enable = true)
+    {
+        enable_histogram_ = enable; // Set histogram tracking flag.
+    }
+
+    // Returns whether power-of-2 reuse distance histogram tracking is enabled.
+    bool
+    is_reuse_distance_histogram_enabled() const
+    {
+        return enable_histogram_; // Return histogram tracking status.
+    }
+
+    // Returns read-only reference to the reuse distance histogram bins.
+    const std::vector<int64_t> &
+    get_reuse_histogram() const
+    {
+        return reuse_histogram_; // Return histogram bin vector.
+    }
+
+    // Returns static list of human-readable power-of-2 bin labels.
+    static const std::vector<std::string> &
+    get_reuse_histogram_labels();
+
+    // Records a reuse distance event into the power-of-2 histogram bins.
+    void
+    record_reuse_histogram_event(int64_t dist);
+
 protected:
     bool success_;
 
@@ -247,6 +312,14 @@ protected:
     int64_t num_hits_;
     int64_t num_misses_;
     int64_t num_compulsory_misses_;
+    int64_t num_cold_misses_;           // Count of cold misses (first access to block/page).
+    int64_t num_capacity_misses_;       // Count of capacity misses (reuse distance >= capacity).
+    int64_t num_conflict_misses_;       // Count of conflict misses (reuse distance < capacity).
+    int64_t device_capacity_in_blocks_; // Total capacity in blocks or entries.
+    bool enable_histogram_;             // Whether to collect reuse distance histogram.
+    std::vector<int64_t> reuse_histogram_; // Bins for reuse distance histogram.
+    reuse_distance_tracker_t reuse_tracker_; // Exact LRU stack reuse distance tracker.
+    int block_size_bits_;               // Log2 of block size for extracting block tag.
     int64_t num_child_hits_;
 
     int64_t num_inclusive_invalidates_;

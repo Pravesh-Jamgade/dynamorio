@@ -48,6 +48,7 @@
 
 #include "memref.h"
 #include "options.h"
+#include "caching_device.h"       // Provide caching_device_t definition for capacity query.
 #include "caching_device_block.h"
 #include "trace_entry.h"
 
@@ -61,6 +62,14 @@ caching_device_stats_t::caching_device_stats_t(const std::string &miss_file,
     , num_hits_(0)
     , num_misses_(0)
     , num_compulsory_misses_(0)
+    , num_cold_misses_(0)
+    , num_capacity_misses_(0)
+    , num_conflict_misses_(0)
+    , device_capacity_in_blocks_(0)
+    , enable_histogram_(false)
+    , reuse_histogram_(28, 0)
+    , reuse_tracker_()
+    , block_size_bits_(compute_log2(block_size))
     , num_child_hits_(0)
     , num_inclusive_invalidates_(0)
     , num_coherence_invalidates_(0)
@@ -94,6 +103,9 @@ caching_device_stats_t::caching_device_stats_t(const std::string &miss_file,
     stats_map_.emplace(metric_name_t::HITS_AT_RESET, num_hits_at_reset_);
     stats_map_.emplace(metric_name_t::MISSES_AT_RESET, num_misses_at_reset_);
     stats_map_.emplace(metric_name_t::COMPULSORY_MISSES, num_compulsory_misses_);
+    stats_map_.emplace(metric_name_t::COLD_MISSES, num_cold_misses_);
+    stats_map_.emplace(metric_name_t::CAPACITY_MISSES, num_capacity_misses_);
+    stats_map_.emplace(metric_name_t::CONFLICT_MISSES, num_conflict_misses_);
     stats_map_.emplace(metric_name_t::CHILD_HITS_AT_RESET, num_child_hits_at_reset_);
     stats_map_.emplace(metric_name_t::CHILD_HITS, num_child_hits_);
     stats_map_.emplace(metric_name_t::INCLUSIVE_INVALIDATES, num_inclusive_invalidates_);
@@ -116,16 +128,37 @@ void
 caching_device_stats_t::access(const memref_t &memref, bool hit,
                                caching_device_block_t *cache_block)
 {
+    // Compute block address from memory reference address and block size bits.
+    addr_t block_addr = (block_size_bits_ >= 0) ? (memref.data.addr >> block_size_bits_) : memref.data.addr;
+    // Query exact LRU reuse distance from tracker.
+    int64_t dist = reuse_tracker_.record_access(block_addr);
+
     // We assume we're single-threaded.
     // We're only computing miss rate so we just inc counters here.
-    if (hit)
+    if (hit) {
         num_hits_++;
-    else {
+    } else {
         num_misses_++;
         if (dump_misses_)
             dump_miss(memref);
 
-        check_compulsory_miss(memref.data.addr);
+        if (dist < 0) {
+            // First-time reference to this block/page: compulsory / cold miss.
+            check_compulsory_miss(memref.data.addr);
+        } else {
+            // Re-reference miss: line was previously in cache and was evicted.
+            int64_t cap = get_capacity_in_blocks();
+            if (dist >= cap) {
+                num_capacity_misses_++; // Capacity miss: reuse distance exceeds device capacity.
+            } else {
+                num_conflict_misses_++; // Conflict miss: evicted despite working set fitting in capacity.
+            }
+        }
+    }
+
+    // Record access event into power-of-2 reuse distance histogram if enabled.
+    if (enable_histogram_) {
+        record_reuse_histogram_event(dist);
     }
 }
 
@@ -144,9 +177,10 @@ caching_device_stats_t::check_compulsory_miss(addr_t addr)
     auto lookup_pair = access_count_.lookup(addr);
 
     // If the address has never been accessed insert proper bound into access_count_
-    // and count it as a compulsory miss.
+    // and count it as a compulsory miss and cold miss.
     if (!lookup_pair.first) {
         num_compulsory_misses_++;
+        num_cold_misses_++;
         access_count_.insert(addr, lookup_pair.second);
     }
 }
@@ -262,10 +296,82 @@ caching_device_stats_t::reset()
     num_hits_ = 0;
     num_misses_ = 0;
     num_compulsory_misses_ = 0;
+    num_cold_misses_ = 0;
+    num_capacity_misses_ = 0;
+    num_conflict_misses_ = 0;
     num_child_hits_ = 0;
     num_inclusive_invalidates_ = 0;
     num_coherence_invalidates_ = 0;
     num_exclusive_invalidates_ = 0;
+    reuse_tracker_.reset();
+    std::fill(reuse_histogram_.begin(), reuse_histogram_.end(), 0);
+}
+
+int64_t
+caching_device_stats_t::get_capacity_in_blocks() const
+{
+    // Return explicit capacity if configured.
+    if (device_capacity_in_blocks_ > 0) {
+        return device_capacity_in_blocks_;
+    }
+    // Query attached caching device if available.
+    if (caching_device_ != nullptr) {
+        int64_t cap = caching_device_->get_num_blocks();
+        return (cap > 0) ? cap : 1;
+    }
+    // Fallback default capacity.
+    return 1;
+}
+
+const std::vector<std::string> &
+caching_device_stats_t::get_reuse_histogram_labels()
+{
+    // Static vector of power-of-2 reuse distance histogram bin labels.
+    static const std::vector<std::string> labels = {
+        "0", "1", "2", "4", "8", "16", "32", "64", "128", "256", "512",
+        "1024", "2048", "4096", "8192", "16384", "32768", "65536", "131072",
+        "262144", "524288", "1048576", "2097152", "4194304", "8388608",
+        "16777216", ">16777216", "inf"
+    };
+    return labels;
+}
+
+void
+caching_device_stats_t::record_reuse_histogram_event(int64_t dist)
+{
+    // Map negative distance (first-time reference / cold / compulsory) to inf bin.
+    if (dist < 0) {
+        reuse_histogram_[27]++; // inf bin.
+        return;
+    }
+    // Handle distance 0 (immediate repeated access).
+    if (dist == 0) {
+        reuse_histogram_[0]++; // Bin 0.
+        return;
+    }
+    // Handle distance 1 (1 unique block between references).
+    if (dist == 1) {
+        reuse_histogram_[1]++; // Bin 1.
+        return;
+    }
+    // Handle distance 2 (2 unique blocks between references).
+    if (dist == 2) {
+        reuse_histogram_[2]++; // Bin 2.
+        return;
+    }
+    // For distances >= 3, compute upper power-of-2 index ceil(log2(dist)).
+    uint64_t v = static_cast<uint64_t>(dist) - 1;
+    int bit = 0;
+    while (v > 0) {
+        v >>= 1;
+        bit++;
+    }
+    // Map powers of 2 up to 2^24 (16,777,216).
+    if (bit <= 24) {
+        reuse_histogram_[bit + 1]++; // Bins 3 (label 4) through 25 (label 16777216).
+    } else {
+        reuse_histogram_[26]++; // Bin 26 (>16777216).
+    }
 }
 
 void

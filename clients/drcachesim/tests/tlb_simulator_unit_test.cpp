@@ -1672,6 +1672,116 @@ unit_test_sector_l2_tlb()
     assert(sim.print_results());                                                    // Verify results print cleanly.
 }
 
+static void
+unit_test_cold_capacity_compulsory_and_reuse_histogram()
+{
+    // 1. Test Cold, Compulsory, and Capacity Misses on Caches using cache_stats_t.
+    // Configure cache stats with 64-byte lines.
+    cache_stats_t c_stats(64);
+    // Explicitly configure capacity to 4 blocks (256 bytes).
+    c_stats.set_device_capacity(4);
+    // Enable power-of-2 reuse distance histogram.
+    c_stats.enable_reuse_distance_histogram(true);
+
+    // Build synthetic memory reference template for instruction reads.
+    memref_t ref = {};
+    ref.data.type = TRACE_TYPE_READ;
+    ref.data.size = 8;
+    ref.data.pid = 1;
+    ref.data.tid = 1;
+
+    // Access 4 distinct cache lines (0x1000, 0x1040, 0x1080, 0x10c0) for the first time.
+    for (int i = 0; i < 4; ++i) {
+        ref.data.addr = 0x1000ULL + static_cast<addr_t>(i * 64);
+        c_stats.access(ref, /*hit=*/false, nullptr);
+    }
+    // Verify all 4 accesses are classified as cold and compulsory misses.
+    assert(c_stats.get_metric(metric_name_t::MISSES) == 4);
+    assert(c_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 4);
+    assert(c_stats.get_metric(metric_name_t::COLD_MISSES) == 4);
+    assert(c_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 0);
+
+    // Access a 5th distinct cache line (0x1100).
+    ref.data.addr = 0x1100ULL;
+    c_stats.access(ref, /*hit=*/false, nullptr);
+    assert(c_stats.get_metric(metric_name_t::MISSES) == 5);
+    assert(c_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 5);
+    assert(c_stats.get_metric(metric_name_t::COLD_MISSES) == 5);
+    assert(c_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 0);
+
+    // Re-access the first line (0x1000) as a MISS.
+    // Between line 0x1000's first reference and now, 4 distinct blocks (0x1040, 0x1080, 0x10c0, 0x1100)
+    // were accessed. Since reuse distance 4 >= device capacity 4, this is a CAPACITY MISS!
+    ref.data.addr = 0x1000ULL;
+    c_stats.access(ref, /*hit=*/false, nullptr);
+    assert(c_stats.get_metric(metric_name_t::MISSES) == 6);
+    assert(c_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 5); // Compulsory misses remains 5.
+    assert(c_stats.get_metric(metric_name_t::COLD_MISSES) == 5);       // Cold misses remains 5.
+    assert(c_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 1);   // Exactly 1 capacity miss recorded!
+
+    // Re-access line 0x1000 immediately as a HIT: reuse distance = 0.
+    c_stats.access(ref, /*hit=*/true, nullptr);
+    assert(c_stats.get_metric(metric_name_t::HITS) == 1);
+
+    // 2. Verify LLC Reuse Distance Histogram Power-of-2 Binning.
+    const auto &hist = c_stats.get_reuse_histogram();
+    const auto &labels = caching_device_stats_t::get_reuse_histogram_labels();
+    // Labels vector must contain exactly 28 bins: 0, 1, 2, 4, ..., 16777216, >16777216, inf.
+    assert(labels.size() == 28);
+    assert(hist.size() == 28);
+    assert(labels[0] == "0");
+    assert(labels[1] == "1");
+    assert(labels[2] == "2");
+    assert(labels[3] == "4");
+    assert(labels[27] == "inf");
+
+    // All 5 initial first-time references (0x1000..0x10c0, 0x1100) have distance = inf.
+    assert(hist[27] == 5); // 5 compulsory accesses in inf bin.
+    // Re-accessing 0x1000 had reuse distance = 4: falls into bin 3 (label "4").
+    assert(hist[3] == 1);  // 1 event in bin 4.
+    // Immediate repeat hit on 0x1000 had reuse distance = 0: falls into bin 0 (label "0").
+    assert(hist[0] == 1);  // 1 event in bin 0.
+
+    // 3. Test TLB Cold, Compulsory, and Capacity Misses using tlb_stats_t.
+    tlb_stats_t t_stats(4096);
+    // Configure TLB capacity to 2 page entries.
+    t_stats.set_device_capacity(2);
+
+    memref_t tlb_ref = {};
+    tlb_ref.data.type = TRACE_TYPE_READ;
+    tlb_ref.data.size = 8;
+    tlb_ref.data.pid = 1;
+    tlb_ref.data.tid = 1;
+
+    // Access page 0 (0x200000) and page 1 (0x201000).
+    tlb_ref.data.addr = 0x200000ULL;
+    t_stats.access(tlb_ref, /*hit=*/false, nullptr);
+    tlb_ref.data.addr = 0x201000ULL;
+    t_stats.access(tlb_ref, /*hit=*/false, nullptr);
+
+    assert(t_stats.get_metric(metric_name_t::MISSES) == 2);
+    assert(t_stats.get_metric(metric_name_t::COLD_MISSES) == 2);
+    assert(t_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 2);
+    assert(t_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 0);
+
+    // Access page 2 (0x202000): 3rd unique page.
+    tlb_ref.data.addr = 0x202000ULL;
+    t_stats.access(tlb_ref, /*hit=*/false, nullptr);
+    assert(t_stats.get_metric(metric_name_t::MISSES) == 3);
+    assert(t_stats.get_metric(metric_name_t::COLD_MISSES) == 3);
+    assert(t_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 3);
+    assert(t_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 0);
+
+    // Re-access page 0 (0x200000) as a MISS: reuse distance = 2 (pages 1 and 2 in between).
+    // Capacity is 2: reuse distance 2 >= capacity 2 -> CAPACITY MISS!
+    tlb_ref.data.addr = 0x200000ULL;
+    t_stats.access(tlb_ref, /*hit=*/false, nullptr);
+    assert(t_stats.get_metric(metric_name_t::MISSES) == 4);
+    assert(t_stats.get_metric(metric_name_t::COLD_MISSES) == 3);       // Cold misses remains 3.
+    assert(t_stats.get_metric(metric_name_t::COMPULSORY_MISSES) == 3); // Compulsory remains 3.
+    assert(t_stats.get_metric(metric_name_t::CAPACITY_MISSES) == 1);   // Exactly 1 capacity miss recorded!
+}
+
 // Entry point for all TLB simulator unit tests.
 void
 unit_test_tlb_simulator(const std::string &testdir)
@@ -1708,6 +1818,8 @@ unit_test_tlb_simulator(const std::string &testdir)
     unit_test_mshr_queues_and_nested_ini();
     // Run Sectored L2 TLB (32x6, 64x6, 128x6), Leaf Block Co-Allocation & INI Configuration unit test.
     unit_test_sector_l2_tlb();
+    // Run Cold, Capacity, Compulsory Misses and LLC Reuse Distance Histogram unit test.
+    unit_test_cold_capacity_compulsory_and_reuse_histogram();
 }
 
 } // namespace drmemtrace
