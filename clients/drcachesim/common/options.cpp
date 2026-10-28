@@ -578,6 +578,12 @@ droption_t<std::string> op_cpu_config(
     "Path to INI configuration file for O3 CPU simulator",
     "Specifies an INI configuration file defining O3 microarchitectural parameters.");
 
+droption_t<bool> op_fast_timing(
+    DROPTION_SCOPE_FRONTEND, "fast_timing", false,
+    "Enable fast non-blocking analytical queuing timing engine",
+    "Enables the fast non-blocking interval queuing performance engine for out-of-order CPU simulation "
+    "to provide ~20x-50x faster simulation while analytically calculating Head-of-Line (HoL) blocking and MSHR stalls.");
+
 droption_t<uint64_t> op_heartbeat_interval(
     DROPTION_SCOPE_FRONTEND, "heartbeat_interval", 10000000ULL, // Default 10M instructions.
     "Instruction interval between progress heartbeats",         // Short description.

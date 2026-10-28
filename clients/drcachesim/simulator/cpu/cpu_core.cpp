@@ -69,6 +69,15 @@ cpu_core_t::cpu_core_t(const cpu_core_knobs_t &knobs,
     wp_knobs.enable_wrong_path = knobs_.enable_wrong_path;
     wp_knobs.max_speculative_depth = knobs_.max_speculative_depth;
     wrong_path_engine_ = speculative_wrong_path_engine_t(wp_knobs);
+
+    // Configure analytical queuing timing engine.
+    analytical_engine_params_t ae_params;
+    ae_params.dispatch_width = knobs_.dispatch_width;
+    ae_params.commit_width = knobs_.commit_width;
+    ae_params.rob_capacity = knobs_.rob_capacity;
+    ae_params.mshr_capacity = 16; // Modern L1D MSHR capacity for queuing contention.
+    ae_params.branch_penalty = knobs_.branch_mispredict_penalty;
+    analytical_engine_ = analytical_engine_t(ae_params);
 }
 
 bool
@@ -103,7 +112,12 @@ cpu_core_t::process_memref(const memref_t &memref)
             if (!itlb_res.hit_l1) {
                 // If ITLB misses, Front-End stalls fetching until translation completes!
                 uint64_t itlb_miss_penalty = (itlb_res.latency_cycles > 1) ? (itlb_res.latency_cycles - 1) : 0;
-                step_cycles(itlb_miss_penalty);
+                if (knobs_.fast_timing) {
+                    analytical_engine_.add_frontend_stall(itlb_miss_penalty);
+                    current_cycle_ = analytical_engine_.get_current_cycle();
+                } else {
+                    step_cycles(itlb_miss_penalty);
+                }
                 itlb_miss_stall_cycles_ += itlb_miss_penalty;
                 if (itlb_res.is_page_fault) {
                     page_fault_stall_cycles_ += itlb_miss_penalty; // Track page fault stall cycles.
@@ -117,7 +131,12 @@ cpu_core_t::process_memref(const memref_t &memref)
                 cache_hierarchy_->request_instruction(knobs_.core_id, memref);
             if (icache_res.level != cache_hit_level_t::HIT_L1I) {
                 // Front-End stalls fetching missing instruction cache line from L2/L3/DRAM!
-                step_cycles(icache_res.latency_cycles);
+                if (knobs_.fast_timing) {
+                    analytical_engine_.add_frontend_stall(icache_res.latency_cycles);
+                    current_cycle_ = analytical_engine_.get_current_cycle();
+                } else {
+                    step_cycles(icache_res.latency_cycles);
+                }
                 icache_miss_stall_cycles_ += icache_res.latency_cycles;
             }
         }
@@ -134,52 +153,58 @@ cpu_core_t::process_memref(const memref_t &memref)
             // If the branch predictor or BTB mispredicted:
             if (pred.is_mispredicted()) {
                 // Incur pipeline squash penalty.
-                branch_recovery_until_cycle_ = current_cycle_ + knobs_.branch_mispredict_penalty;
-                branch_squash_cycles_ += knobs_.branch_mispredict_penalty;
+                if (knobs_.fast_timing) {
+                    analytical_engine_.record_branch_mispredict();
+                    current_cycle_ = analytical_engine_.get_current_cycle();
+                    branch_squash_cycles_ += knobs_.branch_mispredict_penalty;
+                } else {
+                    branch_recovery_until_cycle_ = current_cycle_ + knobs_.branch_mispredict_penalty;
+                    branch_squash_cycles_ += knobs_.branch_mispredict_penalty;
 
-                // 1. Speculative Wrong-Path Execution!
-                // Fetch and execute instructions along the mispredicted path before the branch resolves!
-                if (wrong_path_engine_.is_enabled()) {
-                    std::vector<dyn_instruction_t> wrong_path =
-                        wrong_path_engine_.generate_wrong_path_stream(
-                            instr.seq_id, last_pc_, pred, knobs_.fetch_width,
-                            knobs_.branch_mispredict_penalty, instr.pid, instr.tid,
-                            next_seq_id_);
+                    // 1. Speculative Wrong-Path Execution!
+                    // Fetch and execute instructions along the mispredicted path before the branch resolves!
+                    if (wrong_path_engine_.is_enabled()) {
+                        std::vector<dyn_instruction_t> wrong_path =
+                            wrong_path_engine_.generate_wrong_path_stream(
+                                instr.seq_id, last_pc_, pred, knobs_.fetch_width,
+                                knobs_.branch_mispredict_penalty, instr.pid, instr.tid,
+                                next_seq_id_);
 
-                    // Dispatch and execute wrong-path instructions through the pipeline!
-                    for (auto &wp_instr : wrong_path) {
-                        // Speculative instruction fetch accesses L1I cache and ITLB!
-                        wrong_path_engine_.simulate_speculative_fetch(
-                            knobs_.core_id, wp_instr, cache_hierarchy_, itlb_);
+                        // Dispatch and execute wrong-path instructions through the pipeline!
+                        for (auto &wp_instr : wrong_path) {
+                            // Speculative instruction fetch accesses L1I cache and ITLB!
+                            wrong_path_engine_.simulate_speculative_fetch(
+                                knobs_.core_id, wp_instr, cache_hierarchy_, itlb_);
 
-                        // Allocate space in the ROB and LSQ.
-                        if (rob_.can_dispatch()) {
-                            rob_.dispatch(wp_instr);
-                            scoreboard_.allocate_destination(wp_instr);
+                            // Allocate space in the ROB and LSQ.
+                            if (rob_.can_dispatch()) {
+                                rob_.dispatch(wp_instr);
+                                scoreboard_.allocate_destination(wp_instr);
 
-                            if (wp_instr.op_type == cpu_op_type_t::OP_LOAD) {
-                                if (lsq_.can_dispatch_load()) {
-                                    lsq_.dispatch_load(wp_instr);
-                                    // Speculatively access the TLB and 3-level data cache!
-                                    // This realistically pulls speculative lines into L1D/L2/L3!
-                                    wrong_path_engine_.simulate_speculative_load(
-                                        knobs_.core_id, wp_instr, cache_hierarchy_, dtlb_);
-                                }
-                            } else if (wp_instr.op_type == cpu_op_type_t::OP_STORE) {
-                                if (lsq_.can_dispatch_store()) {
-                                    // Stores buffer in the SQ, but NEVER commit to cache!
-                                    lsq_.dispatch_store(wp_instr);
+                                if (wp_instr.op_type == cpu_op_type_t::OP_LOAD) {
+                                    if (lsq_.can_dispatch_load()) {
+                                        lsq_.dispatch_load(wp_instr);
+                                        // Speculatively access the TLB and 3-level data cache!
+                                        // This realistically pulls speculative lines into L1D/L2/L3!
+                                        wrong_path_engine_.simulate_speculative_load(
+                                            knobs_.core_id, wp_instr, cache_hierarchy_, dtlb_);
+                                    }
+                                } else if (wp_instr.op_type == cpu_op_type_t::OP_STORE) {
+                                    if (lsq_.can_dispatch_store()) {
+                                        // Stores buffer in the SQ, but NEVER commit to cache!
+                                        lsq_.dispatch_store(wp_instr);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // 2. Once the branch resolves after its penalty, squash younger speculative instructions!
-                size_t squashed = rob_.squash_after(instr.seq_id);
-                scoreboard_.squash_after(instr.seq_id);
-                lsq_.squash_after(instr.seq_id);
-                wrong_path_engine_.record_squash(squashed);
+                    // 2. Once the branch resolves after its penalty, squash younger speculative instructions!
+                    size_t squashed = rob_.squash_after(instr.seq_id);
+                    scoreboard_.squash_after(instr.seq_id);
+                    lsq_.squash_after(instr.seq_id);
+                    wrong_path_engine_.record_squash(squashed);
+                }
             }
         }
         last_pc_ = instr.pc;
@@ -216,7 +241,25 @@ cpu_core_t::process_memref(const memref_t &memref)
     execute_instruction(instr);
 
     // 4. Advance simulation clock and commit ready instructions in program order.
-    step_cycles(1);
+    if (knobs_.fast_timing) {
+        analytical_engine_.advance_instruction();
+        current_cycle_ = analytical_engine_.get_current_cycle();
+        // In fast timing mode, commit completed instructions directly without waiting in a cycle-by-cycle loop.
+        std::vector<dyn_instruction_t> retired_instrs;
+        size_t committed = rob_.commit(knobs_.commit_width, current_cycle_ + 1000000000ULL, retired_instrs);
+        total_instructions_retired_ += committed;
+        for (const auto &ret_instr : retired_instrs) {
+            if (ret_instr.op_type == cpu_op_type_t::OP_LOAD) {
+                lsq_.commit_load(ret_instr.seq_id);
+            } else if (ret_instr.op_type == cpu_op_type_t::OP_STORE) {
+                lsq_.commit_store(ret_instr.seq_id);
+            }
+        }
+        std::vector<dyn_instruction_t> drained_stores;
+        lsq_.drain_stores(knobs_.commit_width, drained_stores);
+    } else {
+        step_cycles(1);
+    }
 
     return true;
 }
@@ -225,11 +268,34 @@ void
 cpu_core_t::dispatch_instruction(dyn_instruction_t &instr)
 {
     // Check if the ROB or LSQ is full. If full, step simulation cycles until space frees up!
-    while (!rob_.can_dispatch() ||
-           (instr.op_type == cpu_op_type_t::OP_LOAD && !lsq_.can_dispatch_load()) ||
-           (instr.op_type == cpu_op_type_t::OP_STORE && !lsq_.can_dispatch_store())) {
-        // Advance clock to allow in-flight instructions to finish and retire.
-        step_cycles(1);
+    if (knobs_.fast_timing) {
+        // In fast timing mode, if the ROB or LSQ is full, retire up to commit_width instructions immediately.
+        while (!rob_.can_dispatch() ||
+               (instr.op_type == cpu_op_type_t::OP_LOAD && !lsq_.can_dispatch_load()) ||
+               (instr.op_type == cpu_op_type_t::OP_STORE && !lsq_.can_dispatch_store())) {
+            std::vector<dyn_instruction_t> retired_instrs;
+            size_t committed = rob_.commit(knobs_.commit_width, current_cycle_ + 1000000000ULL, retired_instrs);
+            if (committed == 0) {
+                break;
+            }
+            total_instructions_retired_ += committed;
+            for (const auto &ret_instr : retired_instrs) {
+                if (ret_instr.op_type == cpu_op_type_t::OP_LOAD) {
+                    lsq_.commit_load(ret_instr.seq_id);
+                } else if (ret_instr.op_type == cpu_op_type_t::OP_STORE) {
+                    lsq_.commit_store(ret_instr.seq_id);
+                }
+            }
+            std::vector<dyn_instruction_t> drained_stores;
+            lsq_.drain_stores(knobs_.commit_width, drained_stores);
+        }
+    } else {
+        while (!rob_.can_dispatch() ||
+               (instr.op_type == cpu_op_type_t::OP_LOAD && !lsq_.can_dispatch_load()) ||
+               (instr.op_type == cpu_op_type_t::OP_STORE && !lsq_.can_dispatch_store())) {
+            // Advance clock to allow in-flight instructions to finish and retire.
+            step_cycles(1);
+        }
     }
 
     // Record dispatch cycle.
@@ -307,6 +373,13 @@ cpu_core_t::execute_instruction(dyn_instruction_t &instr)
 
             // Total load completion latency: translation latency + cache latency.
             completion_cycle = issue_cycle + tlb_latency + cache_latency;
+
+            // In fast timing mode, record memory miss and calculate HoL blocking stalls.
+            if (knobs_.fast_timing) {
+                uint64_t total_mem_latency = tlb_latency + cache_latency;
+                analytical_engine_.record_memory_miss(total_mem_latency);
+                current_cycle_ = analytical_engine_.get_current_cycle();
+            }
         }
     } else if (instr.op_type == cpu_op_type_t::OP_STORE) {
         // Translate store memory address via L1 Data TLB during Address Generation (AGU).
@@ -393,8 +466,28 @@ void
 cpu_core_t::flush_and_drain_pipeline()
 {
     // Drain all remaining in-flight instructions from the ROB.
-    while (!rob_.empty()) {
-        step_cycles(1);
+    if (knobs_.fast_timing) {
+        while (!rob_.empty()) {
+            std::vector<dyn_instruction_t> retired_instrs;
+            size_t committed = rob_.commit(knobs_.commit_width, current_cycle_ + 1000000000ULL, retired_instrs);
+            if (committed == 0) {
+                break;
+            }
+            total_instructions_retired_ += committed;
+            for (const auto &ret_instr : retired_instrs) {
+                if (ret_instr.op_type == cpu_op_type_t::OP_LOAD) {
+                    lsq_.commit_load(ret_instr.seq_id);
+                } else if (ret_instr.op_type == cpu_op_type_t::OP_STORE) {
+                    lsq_.commit_store(ret_instr.seq_id);
+                }
+            }
+            std::vector<dyn_instruction_t> drained_stores;
+            lsq_.drain_stores(knobs_.commit_width, drained_stores);
+        }
+    } else {
+        while (!rob_.empty()) {
+            step_cycles(1);
+        }
     }
 }
 

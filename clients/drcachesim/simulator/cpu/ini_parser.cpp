@@ -426,6 +426,8 @@ ini_config_t::apply_to_knobs(cpu_simulator_knobs_t &knobs) const
     knobs.alu_latency = get_uint64(cpu_sec, "alu_latency", knobs.alu_latency);
     knobs.enable_wrong_path = get_bool(cpu_sec, "enable_wrong_path", knobs.enable_wrong_path);
     knobs.max_speculative_depth = get_uint64(cpu_sec, "max_speculative_depth", knobs.max_speculative_depth);
+    knobs.fast_timing = get_bool(cpu_sec, "fast_timing",
+                        get_bool("simulation", "fast_timing", knobs.fast_timing));
 
     // [l1i] or [icache] section parameters.
     std::string l1i_sec = has_section("l1i") ? "l1i" : "icache";

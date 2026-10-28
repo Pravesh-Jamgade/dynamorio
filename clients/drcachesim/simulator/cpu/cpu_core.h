@@ -60,6 +60,8 @@
 #include "cpu/lsq.h"
 // Provide Speculative Wrong-Path execution engine.
 #include "cpu/wrong_path.h"
+// Provide Fast Analytical Queuing Timing Engine.
+#include "cpu/analytical_engine.h"
 // Provide 3-Level Cache hierarchy.
 #include "cpu/three_level_cache.h"
 // Provide TLB interfaces.
@@ -91,6 +93,7 @@ struct cpu_core_knobs_t {
         , alu_latency(1)                       // ALU execution latency in cycles.
         , enable_wrong_path(true)              // Enable speculative wrong-path execution.
         , max_speculative_depth(32)            // Max instructions fetched along wrong path.
+        , fast_timing(false)                   // Enable non-blocking analytical queuing timing engine.
     {
     }
 
@@ -107,6 +110,7 @@ struct cpu_core_knobs_t {
     uint64_t alu_latency;                      // Fixed execution latency for general integer ops.
     bool enable_wrong_path;                    // Whether to simulate speculative wrong-path execution.
     size_t max_speculative_depth;              // Maximum speculative instructions fetched on wrong path.
+    bool fast_timing;                          // Whether to use fast analytical queuing timing engine.
 };
 
 /**
@@ -212,6 +216,7 @@ private:
     rob_t rob_;                                // Reorder Buffer.
     lsq_t lsq_;                                // Load-Store Queue.
     speculative_wrong_path_engine_t wrong_path_engine_; // Speculative wrong-path engine.
+    analytical_engine_t analytical_engine_;    // Fast analytical queuing performance engine.
 
     uint64_t current_cycle_ = 1;               // Current processor clock cycle.
     uint64_t next_seq_id_ = 1;                 // Sequence ID counter for dynamic instructions.

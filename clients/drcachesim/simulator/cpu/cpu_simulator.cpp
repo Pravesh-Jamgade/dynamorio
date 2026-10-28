@@ -160,6 +160,7 @@ cpu_simulator_t::cpu_simulator_t(const cpu_simulator_knobs_t &knobs)
         core_knobs.alu_latency = knobs_.alu_latency;
         core_knobs.enable_wrong_path = knobs_.enable_wrong_path;
         core_knobs.max_speculative_depth = knobs_.max_speculative_depth;
+        core_knobs.fast_timing = knobs_.fast_timing;
 
         // Construct the core pipeline coupling Front-End, ROB, LSQ, TLBs, and 3-level cache!
         cores_[i].reset(new cpu_core_t(core_knobs, cache_hierarchy_.get(),
@@ -396,6 +397,7 @@ cpu_simulator_t::print_csv_stats(std::ostream &os) const
     os << "l2_tlb_sector_size, " << knobs_.l2_tlb_sector_size << "\n";
     os << "dram_latency, " << knobs_.dram_latency << "\n";
     os << "page_fault_penalty, " << knobs_.page_fault_penalty << "\n";
+    os << "fast_timing, " << (knobs_.fast_timing ? 1 : 0) << "\n";
     os << "sim_refs, " << knobs_.sim_refs << "\n";
     os << "heartbeat_interval, " << knobs_.heartbeat_interval << "\n";
     // Separate configuration metadata block from runtime performance statistics.

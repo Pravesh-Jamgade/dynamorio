@@ -166,6 +166,7 @@ extern dynamorio::droption::droption_t<unsigned int> op_TLB_l2_tlb_latency;
 extern dynamorio::droption::droption_t<unsigned int> op_TLB_dram_latency;
 extern dynamorio::droption::droption_t<uint64_t> op_page_fault_penalty; // OS demand page fault penalty in cycles.
 extern dynamorio::droption::droption_t<std::string> op_cpu_config;
+extern dynamorio::droption::droption_t<bool> op_fast_timing;         // Fast analytical queuing performance model.
 extern dynamorio::droption::droption_t<uint64_t> op_heartbeat_interval; // Heartbeat interval in instructions.
 extern dynamorio::droption::droption_t<std::string> op_stats_file;      // CSV stats output log filename.
 extern dynamorio::droption::droption_t<std::string> op_tool;

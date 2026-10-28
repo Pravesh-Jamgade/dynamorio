@@ -119,6 +119,7 @@ struct cpu_simulator_knobs_t {
         , stats_file("stats.log")               // Default output file for CSV simulation stats.
         , config_file("")                       // Path to INI configuration file used.
         , commit_id("")                         // Git commit ID / hash of the codebase.
+        , fast_timing(false)                    // Default false: full cycle-by-cycle OoO event loop.
     {
     }
 
@@ -173,6 +174,7 @@ struct cpu_simulator_knobs_t {
     std::string stats_file;                     // Output file path to write CSV statistics (default stats.log).
     std::string config_file;                    // Path to INI configuration file used.
     std::string commit_id;                      // Git commit ID / hash of the codebase.
+    bool fast_timing;                           // Enable fast analytical queuing timing engine.
 };
 
 /**
